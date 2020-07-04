@@ -37,6 +37,42 @@ class CopernicaRestAPI
     }
 
     /**
+     * Converts parameters into an encoded string.
+     *
+     * An example of passing the 'fields' parameter into this function:
+     * ['fields' => ['land==netherlands', 'age>16']]
+     *
+     * @param array $parameters
+     *   An array with key-value pairs, where the value can also be an array. In
+     *   the latter case, the key will be present multiple time in the resulting
+     *   query string, as 'key[]'.
+     *
+     * @return string
+     *   The encoded URL parameters, including a leading '?'.
+     */
+    private function encodeParams(array $parameters)
+    {
+        $encoded_parts = [];
+
+        foreach ($parameters as $key => $value) {
+            if (is_array($value)) {
+                // This will come out as key[]=subvalue1&key[]=subvalue2; the
+                // keys inside $value are ignored. The important thing here is
+                // that the [] are NOT URL-encoded.
+                foreach ($value as $subvalue) {
+                    // Testing with a value containing spaces suggests that both
+                    // urlencode() and rawurlencode() are good for Copernica.
+                    $encoded_parts[] = rawurlencode($key) . '[]=' . rawurlencode($subvalue);
+                }
+            } else {
+                $encoded_parts[] = rawurlencode($key) . '=' . rawurlencode($value);
+            }
+        }
+
+        return $encoded_parts ? '?' . implode('&', $encoded_parts) : '';
+    }
+
+    /**
      *  Do a GET request
      * 
      *  @param  string      Resource to fetch
@@ -45,11 +81,9 @@ class CopernicaRestAPI
      */
     public function get($resource, array $parameters = array())
     {
-        // the query string
-        $query = http_build_query(array('access_token' => $this->token) + $parameters);
-
         // construct curl resource
-        $curl = curl_init("{$this->host}/v{$this->version}/$resource?$query");
+        $parameters['access_token'] = $this->token;
+        $curl = curl_init("{$this->host}/v{$this->version}/$resource" . $this->encodeParams($parameters));
 
         // additional options
         curl_setopt_array($curl, array(CURLOPT_RETURNTRANSFER => true));
@@ -121,11 +155,9 @@ class CopernicaRestAPI
      */
     public function sendData($resource, array $data = array(), array $parameters = array(), $method = "POST")
     {
-        // the query string
-        $query = http_build_query(array('access_token' => $this->token) + $parameters);
-
         // construct curl resource
-        $curl = curl_init("{$this->host}/v{$this->version}/$resource?$query");
+        $parameters['access_token'] = $this->token;
+        $curl = curl_init("{$this->host}/v{$this->version}/$resource" . $this->encodeParams($parameters));
 
         // data will be json encoded
         $data = json_encode($data);
