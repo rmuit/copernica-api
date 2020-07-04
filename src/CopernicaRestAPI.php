@@ -1,4 +1,7 @@
 <?php
+
+namespace CopernicaApi;
+
 /**
  *  This helper class was made for the Copernica REST API and will 
  *  handle GET, POST, PUT and DELETE calls. It can be used for both 

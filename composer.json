@@ -1,0 +1,25 @@
+{
+    "name": "wyz/copernica-api",
+    "description": "Some PHP code to aid communicating with the Copernica REST API",
+    "type": "library",
+    "license": "GPL-2.0-or-later",
+    "authors": [
+        {
+            "name": "Roderik Muit",
+            "email": "rm@wyz.biz"
+        },
+        {
+            "name": "Copernica Team",
+            "email": "info@copernica.com"
+        }
+    ],
+    "autoload": {
+        "psr-4": {
+            "CopernicaApi\\": "src"
+        }
+    },
+    "require": {
+        "ext-curl": "*",
+        "ext-json": "*"
+    }
+}
