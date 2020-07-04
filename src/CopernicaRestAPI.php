@@ -91,14 +91,19 @@ class CopernicaRestAPI
         // do the call
         $answer = curl_exec($curl);
 
-        // do we have a JSON output? we can be nice and parse it for the user
-        if (curl_getinfo($curl, CURLINFO_CONTENT_TYPE) == 'application/json') {
+        // Check for CURL error first (which should often provide more info
+        // than "Response did not indicate Content-Type application/json").
+        $curl_errno = curl_errno($curl);
+        if ($curl_errno) {
+            $curl_error = curl_error($curl);
+            throw new \RuntimeException("CURL returned code: $curl_errno: \"$curl_error\". Output: \"$answer\".", $curl_errno);
+        } elseif (curl_getinfo($curl, CURLINFO_CONTENT_TYPE) == 'application/json') {
 
             // the JSON parsed output
             $jsonOut = json_decode($answer, true);
 
             // if we have a json error then we have some garbage in the out
-            if (json_last_error() != JSON_ERROR_NONE) throw new Exception('Unexpected input: '.$answer);
+            if (json_last_error() != JSON_ERROR_NONE) throw new \RuntimeException('Unexpected input: '.$answer);
 
             // return the json
             return $jsonOut;
