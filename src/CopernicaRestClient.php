@@ -206,7 +206,7 @@ class CopernicaRestClient
      * @return mixed
      *   ID of created entity, or simply true/false to indicate success/failure.
      */
-    public function sendData($resource, array $data = array(), array $parameters = array(), $put = FALSE)
+    public function sendData($resource, array $data = array(), array $parameters = array(), $put = false)
     {
         // Force some compatibility in case someone is porting code from the
         // CopernicaRestAPI class and still sending a string.
@@ -582,7 +582,8 @@ class CopernicaRestClient
      *
      * @return \CopernicaApi\CopernicaRestAPI|object
      */
-    private function getApiConnection() {
+    private function getApiConnection()
+    {
         if (!isset($this->api)) {
             if ($this->apiFactoryClassName) {
                 // We're using the factory pattern because we need to be able
@@ -596,4 +597,3 @@ class CopernicaRestClient
         return $this->api;
     }
 }
-

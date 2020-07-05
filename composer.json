@@ -1,6 +1,6 @@
 {
     "name": "wyz/copernica-api",
-    "description": "Some PHP code to aid communicating with the Copernica REST API",
+    "description": "Copernica REST API PHP tools",
     "type": "library",
     "license": "GPL-2.0-or-later",
     "authors": [
@@ -21,5 +21,8 @@
     "require": {
         "ext-curl": "*",
         "ext-json": "*"
+    },
+    "require-dev": {
+        "squizlabs/php_codesniffer": "^3.5"
     }
 }
