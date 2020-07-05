@@ -1,4 +1,4 @@
-Copernica REST API PHP tools
+Copernica REST API PHP tools [![Build Status](https://travis-ci.com/rmuit/sharpspring-restapi.svg?branch=master)](https://travis-ci.com/rmuit/copernica-api)
 ============================
 
 This builds on the CopernicaRestAPI class which Copernica offer for download,
@@ -127,6 +127,11 @@ The library (very likely) works with PHP5 and PHP7. While PHP5 is way beyond
 end-of-life, this class will keep from adding PHP7-only language constructs
 until I see a real benefit on code quality (which is not the case yet), or
 until other contributors indicate a need for it.
+
+The 'build process' (see icon at the top; a similar passed/failed message will
+appear on PRs) is only checking coding standards against PHP5.6+ / PSR12.
+CopernicaRestClient is such a thin layer that I don't consider it in need of
+unit tests.
 
 ### Project name
 
