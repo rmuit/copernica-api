@@ -455,7 +455,9 @@ class CopernicaRestClient
         $this->lastEntitiesParameters = $state['last_parameters'];
         $this->lastEntitiesDatasetTotal = $state['last_total'];
         $this->nextEntitiesDatasetStart = $state['next_start'];
-        // We don't know if the currenet class has the same token/version.
+        // We don't know if the current class has the same token/version. (We
+        // could compare against the current values of token/api set in this
+        // class, but it's such an unimportant optimization...)
         unset($this->api);
         if (isset($state['token'])) {
             $this->token = $state['token'];

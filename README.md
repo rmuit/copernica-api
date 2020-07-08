@@ -44,7 +44,7 @@ $mailings = $client->getEntities('publisher/emailings');
 while ($next_batch = $client->getEntitiesNextBatch()) {
     $mailings = array_merge($mailings, $next_batch);
     // It is possible to pause execution and fetch the next batch in a separate
-    // PHP thread, with some extra work; check saveState() for this.
+    // PHP thread, with some extra work; check backupState() for this.
 }
 
 // Get non-entity data (i.e. data that has no 'id' property). This is preferred
@@ -81,12 +81,7 @@ API client class).
 
 - copernica_rest_api.php (the CopernicaRestAPI class) as downloaded from the
   Copernica website (REST API v2 documentation - REST API example), with only a
-  few changes:
-  - Proper handling of array parameters like 'fields'.
-  - A little extra error handling in the get() call, as far as it's necessary
-    to be kept close to the Curl call. (Additional error handling is in the
-    extra wrapper class.)
-  - Addition of the required namespace.
+  few changes.
 
 - A CopernicaRestClient class which wraps around CopernicaRestAPI. Some
   comments reflect gaps (around detailed error reporting) which cannot be
@@ -115,11 +110,32 @@ keeping it in a separate file, for a combination of overlapping reasons:
   which executes the HTTP requests in a different way (e.g. using Guzzle),
   without needing to touch (most of) the code which interprets the responses.
 
-### Branches
+### Extra branches
 
 - 'copernica' holds the unmodified downloaded copernica_rest_api.php.
-- 'copernica-changed' holds the patches to it (except for the namespace, which
-  is added in 'master') which might be good to fix upstream by Copernica.
+- 'copernica-changed' holds the patches to it (except for the addition of the 
+  namespace, which is done in 'master'):
+  - Proper handling of array parameters like 'fields'.*
+  - A little extra error handling in the get() call, as far as it's necessary
+    to be kept close to the Curl call. (Additional error handling is in the
+    extra wrapper class.)
+
+\* Actually... The first patch doesn't seem to have any additional value
+anymore. In case you want to know:
+* https://www.copernica.com/en/documentation/restv2/rest-fields-parameter
+  documents an example for the fields parameter of 
+  `https://api.copernica.com/v2/database/$id/profiles?fields[]=land%3D%3Dnetherlands&fields[]=age%3E16`
+* This is impossible to do with Copernica's own class: passing an array with
+  parameters results in  
+  `https://api.copernica.com/v2/database/$id/profiles?fields%5B0%5D=land%3D%3Dnetherlands&fields%5B1%5D=age%3E16`
+* I could have sworn that around September 2019, querying the latter URL did
+  not result in correct data being returned, which is why I patched the code 
+  to generate the former.
+* As of the time of publishing this code, the latter URL works fine. So either
+  I was doing something dumb, or Copernica has patched the API endpoint after
+  September 2019 to be able to handle encoded [] characters as if they were not
+  encoded. At any rate... The patch doesn't seem to have real value anymore,
+  but I'll keep it.
 
 ### Compatibility
 
