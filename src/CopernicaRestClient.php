@@ -338,6 +338,9 @@ class CopernicaRestClient
      * @return array[]
      *   The 'data' part of the JSON-decoded response body, i.e. an array of
      *   entities.
+     *
+     * @throws \RuntimeException
+     *   If the result metadata are not successfully verified.
      */
     public function getEntities($resource, array $parameters = array())
     {
@@ -345,14 +348,22 @@ class CopernicaRestClient
         $this->lastEntitiesResource = $resource;
         $this->lastEntitiesParameters = $parameters;
 
-        $data = $this->unwrapEntitiesResult($result, $parameters);
-        foreach ($data as $result) {
-            if (empty($result['id']) && empty($result['ID'])) {
+        $this->checkEntitiesMetadata($result, $parameters, 'response from Copernica API');
+
+        $this->lastEntitiesDatasetTotal = $result['total'];
+        // Remember 'assumed total fetched, according to the start parameter'.
+        $this->nextEntitiesDatasetStart = $result['start'] + $result['count'];
+        if ($this->nextEntitiesDatasetStart > $this->lastEntitiesDatasetTotal) {
+            throw new RuntimeException("Unexpected structure in response from Copernica API: 'total' property (" . json_encode($result['total']) . ") is smaller than next start pointer (" . json_encode($this->nextEntitiesDatasetStart) . ").");
+        }
+
+        foreach ($result['data'] as $entity) {
+            if (empty($entity['id']) && empty($entity['ID'])) {
                 throw new RuntimeException("One of the entities returned from $resource call does not contain 'id'.");
             }
         }
 
-        return $data;
+        return $result['data'];
     }
 
     /**
@@ -398,6 +409,81 @@ class CopernicaRestClient
     {
         // The '>' situation would have errored out in unwrapEntitiesResult().
         return $this->nextEntitiesDatasetStart >= $this->lastEntitiesDatasetTotal;
+    }
+
+    /**
+     * Extracts embedded entities from an entity's data.
+     *
+     * A list of embedded entities is wrapped inside its own structure of
+     * start/limit/count/total properties, and this function extract them from
+     * that structure so calling code does not need to deal with it. (Just like
+     * every API response containing entities exists of such a structure but
+     * getEntities() extracts transparently them for us.)
+     *
+     * Two types of entity that are known to have lists of embedded entities,
+     * are:
+     * - databases, which have 'fields', 'interests' and 'collections'
+     * - collections, which again have 'fields'.
+     * Each of these embedded properties also have their own API calls
+     * defined, e.g. databases/<ID>/fields, which is recommended to call if we
+     * are just looking for the embedded entities. But for code that wants to
+     * use data from lists of embedded entities and/or the main entity at the
+     * same time, and does not want to perform repeated API calls, this helper
+     * method can come in handy.
+     *
+     * This method isn't very generic, in the sense that it requires the caller
+     * to know about which properties contain 'wrapped' entities and to
+     * estimate that the list of entities is complete. Then again, the whole
+     * concept of returning  embedded entities inside an API result feels not
+     * very generic to begin with. (It wastes time on the API server side if we
+     * don't need those data.) It's quite possible that this only  applies to
+     * databases and collections; if Copernica was doing this more often, it
+     * would make more sense to create a separate class to represent entity
+     * data with getters for the embedded entities. But at the moment, that
+     * seems unnecessary.
+     *
+     * @param array $entity
+     *   The entity containing embedded data.
+     * @param string $property_name
+     *   The property containing a list of entities wrapped in
+     *   start/limit/count/total properties.
+     * @param bool $throw_if_incomplete
+     *   (Optional) if set to FALSE, this method will not throw an exception if
+     *   the list of embedded entities is incomplete but will just return the
+     *   incomplete list. By default it throws an exception with code 113, and
+     *   supposedly the only way to get a complete list is to perform the
+     *   separate API call for the entities, and then supposedly call
+     *   getEntitiesNextBatch() until you have
+     *
+     * @return array
+     *   The embedded entities.
+     *
+     * @throws \RuntimeException
+     *   If the property does not have the expected structure.
+     */
+    public function getEmbeddedEntities(array $entity, $property_name, $throw_if_incomplete = true)
+    {
+        // We'd return an empty array for a not-set property name, IF we had an
+        // example of a certain expected property not being set at all if the
+        // number of embedded entities is 0.
+        if (!isset($entity[$property_name])) {
+            throw new RuntimeException("'$property_name' property is not set; cannot extract embedded entities.");
+        }
+        if (!is_array($entity[$property_name])) {
+            throw new RuntimeException("'$property_name' property is not an array; cannot extract embedded entities.");
+        }
+        $this->checkEntitiesMetadata($entity[$property_name], [], "'$property_name' property");
+
+        if ($entity[$property_name]['start'] !== 0) {
+            // This is unexpected; we don't know how embedded entities implement
+            // paging and until we do, we disallow this.
+            throw new RuntimeException("List of entities inside '$property_name' property starts at {}; we cannot handle anything not starting at 0.");
+        }
+        if (!$throw_if_incomplete && $entity[$property_name]['count'] !== $entity[$property_name]['total']) {
+            throw new RuntimeException("Cannot return the total list of {$entity[$property_name]['totel']} entities inside '$property_name' property; only {$entity[$property_name]['count']} found.");
+        }
+
+        return $entity[$property_name]['data'];
     }
 
     /**
@@ -455,9 +541,7 @@ class CopernicaRestClient
         $this->lastEntitiesParameters = $state['last_parameters'];
         $this->lastEntitiesDatasetTotal = $state['last_total'];
         $this->nextEntitiesDatasetStart = $state['next_start'];
-        // We don't know if the current class has the same token/version. (We
-        // could compare against the current values of token/api set in this
-        // class, but it's such an unimportant optimization...)
+        // We don't know if the currenet class has the same token/version.
         unset($this->api);
         if (isset($state['token'])) {
             $this->token = $state['token'];
@@ -468,71 +552,56 @@ class CopernicaRestClient
     }
 
     /**
-     * Unwraps a result array from a GET request that contains 'entities'.
+     * Checks a data structure containing Copernica's 'list metadata'.
      *
-     * Calling this method influences the next call to getEntitiesNextBatch(),
-     * so it's doubtful that this is safe to call from anywhere except
-     * getEntities().
-     *
-     * @param array $result
-     *   The JSON-decoded response body from a GET query.
+     * @param array $struct
+     *   The structure, which is usually either the JSON-decoded response body
+     *   from a GET query, or a property inside an entity which contains
+     *   embedded entities.
      * @param array $parameters
-     *   The parameters for the query returning this result. These are used to
-     *   doublecheck some result properties.
-     *
-     * @return array
-     *   The 'data' part of the JSON-decoded response body, if the metadata
-     *   are successfully verified.
+     *   The parameters for the GET query returning this result. These are used
+     *   to doublecheck some result properties.
+     * @param string $struct_descn
+     *   Description of the structure, for log files.
      *
      * @throws \RuntimeException
      *   If the result metadata are not successfully verified.
      */
-    private function unwrapEntitiesResult(array $result, array $parameters)
+    private function checkEntitiesMetadata(array $struct, array $parameters, $struct_descn)
     {
-        $this->checkResultForError($result);
+        $this->checkResultForError($struct);
         // We will throw an exception for any unexpected value. That may seem
         // way too strict but at least we'll know when something changes.
         foreach (['start', 'limit', 'count', 'total', 'data'] as $key) {
-            if (!isset($result[$key])) {
-                throw new RuntimeException("Unexpected structure in response from Copernica API: no '$key' value found.'");
+            if (!isset($struct[$key])) {
+                throw new RuntimeException("Unexpected structure in $struct_descn: no '$key' value found.'");
             }
-            if ($key !== 'data' && !is_numeric($result[$key])) {
-                throw new RuntimeException("Unexpected structure in response from Copernica API: '$key' value (" . json_encode($result[$key]) . ') is non-numeric.');
+            if ($key !== 'data' && !is_numeric($struct[$key])) {
+                throw new RuntimeException("Unexpected structure in $struct_descn: '$key' value (" . json_encode($struct[$key]) . ') is non-numeric.');
             }
         }
-        if (!is_array($result['data'])) {
-            throw new RuntimeException("Unexpected structure in response from Copernica API: 'data' value is not an array(" . json_encode($result['count']) . ').');
+        if (!is_array($struct['data'])) {
+            throw new RuntimeException("Unexpected structure in $struct_descn: 'data' value is not an array(" . json_encode($struct['count']) . ').');
+        }
+        // Regardless of the paging stuff, 'count' should always be equal to
+        // count of data.
+        if ($struct['count'] !== count($struct['data'])) {
+            throw new RuntimeException("Unexpected structure in $struct_descn: 'count' value (" . json_encode($struct['count']) . ") is not equal to number of array values in 'data' (" . count($struct['data']) . ').');
         }
 
-        // IF there is no paging going on for this response, then start == 0...
-        if (!isset($parameters['start']) && $result['start'] !== 0) {
-            throw new RuntimeException("Unexpected structure in response from Copernica API: 'start' value is " . json_encode($result['start']) . ' but is expected to be 0.');
-        }
-        if (isset($parameters['start']) && $result['start'] !== $parameters['start']) {
-            throw new RuntimeException("Unexpected structure in response from Copernica API: 'start' value is " . json_encode($result['start']) . ' but is expected to be ' . $parameters['start'] . '.');
-        }
-        $this->lastEntitiesDatasetTotal = $result['total'];
-        // Remember 'assumed total fetched, according to the start parameter'.
-        $this->nextEntitiesDatasetStart = $result['start'] + $result['count'];
-        if ($this->nextEntitiesDatasetStart > $this->lastEntitiesDatasetTotal) {
-            throw new RuntimeException("Unexpected structure in response from Copernica API: 'total' property (" . json_encode($result['total']) . ") is smaller than next start pointer (" . json_encode($this->nextEntitiesDatasetStart) . ").");
+        $expected_start = isset($parameters['start']) ? $parameters['start'] : 0;
+        if ($struct['start'] !== $expected_start) {
+            throw new RuntimeException("Unexpected structure in $struct_descn: 'start' value is " . json_encode($struct['start']) . ' but is expected to be 0.');
         }
         // We expect the count of data fetched to be exactly equal to the
         // limit, unless we've fetched all data - then the count can be less.
-        if ($this->nextEntitiesDatasetStart == $this->lastEntitiesDatasetTotal) {
+        if ($result['start'] + $result['count'] == $result['total']) {
             if ($result['count'] > $result['limit']) {
                 throw new RuntimeException("Unexpected structure in response from Copernica API: 'count' value (" . json_encode($result['count']) . ") is not equal to 'limit' (" . json_encode($result['limit']) . ').');
             }
         } elseif ($result['count'] !== $result['limit']) {
             throw new RuntimeException("Unexpected structure in response from Copernica API: 'count' value (" . json_encode($result['count']) . ") is not equal to 'limit' (" . json_encode($result['limit']) . '), which should be the case when we only fetched part of the result.');
         }
-        // Regardless of the paging stuff, 'count' should always be equal to
-        // count of data.
-        if ($result['count'] !== count($result['data'])) {
-            throw new RuntimeException("Unexpected structure in response from Copernica API: 'count' value (" . json_encode($result['count']) . ") is not equal to number of array values in 'data' (" . count($result['data']) . ').');
-        }
-
-        return $result['data'];
     }
 
     /**

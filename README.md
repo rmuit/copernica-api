@@ -5,18 +5,24 @@ This builds on the CopernicaRestAPI class which Copernica offer for download,
 and adds an API Client class containing some useful helper methods to work
 more smoothly with returned data.
 
-(The code is the result of several months of work with various endpoints, to
-the level that I'm reasonably confident the methods are generally applicable
-and represent a decent way forward - so it's time to publish.)
+The code is the result of several months of work with various endpoints, to
+the level that I'm reasonably confident the code is generally applicable and
+future proof - so it's time to publish. Ideally it still needs work on
+handling/documentation of errors.
 
 ## Usage
 
 Only the REST API client is detailed here; the rest is left for the user to
 discover.
 
-The get() call is usable, but it is recommended to call one of the 'wrapper'
-methods, instead; one of the three below hopefully fits any specific API
-endpoint:
+The get() call is usable, but it is recommended to call one of the three below
+'wrapper' methods instead, which validate the API response and guarantee to
+only return valid data, or throw an exception otherwise. It is up to the
+caller to know which wrapper method is applicable to any specific API endpoint.
+
+You likely want to wrap all get*() calls in try/catch blocks; below example
+only documents it for getEntity() because it's the only call that can throw
+exceptions for cases that are not technically errors.
 ```php
 $client = new \CopernicaApi\CopernicaRestClient(TOKEN);
 
@@ -26,14 +32,10 @@ try {
 }
 catch (\RuntimeException $e) {
     // Either something went wrong here, or the profile was deleted (which the
-    // API endpoint does not treat as an error, but you probably want to. If
+    // API endpoint does not treat as an error, but you probably want to). If
     // you want to have the response indicating "removed" returned instead,
     // then pass TRUE as the third argument to the getEntity() call.
 }
-// You likely want to wrap all get*() calls in try/catch blocks; we only
-// provide the example for getEntity() because it's the only call that can
-// throw exceptions for cases that are not technically errors.
-
 
 // Get a list of entities; this will check the structure with its
 // start/total/count/etc properties, and return only the relevant 'data' part:
@@ -44,7 +46,7 @@ $mailings = $client->getEntities('publisher/emailings');
 while ($next_batch = $client->getEntitiesNextBatch()) {
     $mailings = array_merge($mailings, $next_batch);
     // It is possible to pause execution and fetch the next batch in a separate
-    // PHP thread, with some extra work; check backupState() for this.
+    // PHP thread, with some extra work; check saveState() for this.
 }
 
 // Get non-entity data (i.e. data that has no 'id' property). This is preferred
@@ -70,6 +72,23 @@ $success = $client->put("profile/$new_id", ['email' => 'info@wyz.biz']);
 // for now (maybe until a next major version of this library). It's the same
 // as the example class' sendData() except the last argument is a boolean.
 $success_or_failure = $client->sendData("profile/$new_id", ['email' => 'info@wyz.biz'], [], true);
+```
+
+The response of some API calls contain lists of other entities inside an entity.
+This is not very common. (It's likely only the case for 'structure' entities
+like databases and collections, as opposed to 'user data' entities.) These
+embedded entities are wrapped inside a similar set of metadata as an API result
+for a list of entities. While this library does not implement perfect
+structures to work with embedded entities, it does provide one method to
+validate and 'unwrap' these metadata so the caller doesn't need to worry about
+it. An example:
+```php
+$database = $client->getEntity("database/$db_id");
+$collections = $client->getEmbeddedEntities($database, 'collections');
+$first_collection = reset($collections);
+$first_collection_fields = $client->getEmbeddedEntities($first_collection, 'fields');
+// Note if you only need the collections of one database, or the fields of one
+// collection, it is recommended to call the dedicated API endpoint instead.
 ```
 
 ## Some more details
@@ -190,25 +209,37 @@ the code and the README, this has been written by someone who
   array (for e.g. database fields); he wants dedicated methods and classes for
   each entity and its properties.
 
+I can certainly appreciate that last sentiment for 'embedded entities' (like
+fields inside collections inside the response for a database), which contain
+layers of metadata that calling code shouldn't need to deal with. However,
+embedded entities are an outlier, not the norm.
+
 While I am certainly [not](https://github.com/rmuit/sharpspring-restapi)
 [against](https://github.com/rmuit/PracticalAfas/blob/master/README-update.md)
 using value objects where it has a practical purpose... I tend to favor working
 with the returned array data if the reasons to do otherwise aren't clear.
-Wrapping returned data often just obfuscates them. That may be a personal
+Wrapping returned data often just obfuscates it. That may be a personal
 preference.
 
 And I unfortunately cannot derive the practical purpose from the code or the
-example in the README.
+example in the README. The README only documents one example of those embedded
+entities which IMHO isn't very representative of every day API use.
 
-What I think has much more practical value than wrapping array data into a
-bunch of separate PHP classes, is encapsulating the necessary checks that a
-programmer needs to do repeatedly on data / call results which an API endpoint
-returns. I favor being really strict and throwing exceptions for any unexpected
-data, so that my 'regular' code doesn't have to do them / can be sure that the
-data is as expected. The checks in various get*() commands would need to be
-ported into individual classes in this project. (Likely one of the get*() calls
-maps to each of the classes, which in itself is good.) And I'm not sure how
-difficult it would be to port over the getEntitiesNextBatch() functionality.
+What I think has much more practical value (generally when dealing with remote
+APIs) than wrapping array data into separate PHP classes, is doing all
+necessary checks which code needs to do repeatedly on returned results, so that
+a caller 1) doesn't need to deal with those; 2) can be absolutely sure that the
+data returend by a client class is valid. (I favor being really strict and
+throwing exceptions for any unexpected data, for reason 2.)
+
+So: it would be important to me to integrate the strict checks I have made in
+the various get*() commands, into individual classes in this project. The
+advantage would likely be that the difference between my various get*() calls
+would disappear, because only one of each maps to each of the classes. However,
+* I cannot tell from reading the code, how successful that integration would be.
+  (The code setup is unfortunately too opaque for me to immediately grasp this.)
+* I'm also not sure how difficult it would be to port over the
+  getEntitiesNextBatch() functionality.
 
 For now, I'd rather spend some time writing this README and polishing my
 existing code to publish it as a separate project, rather than retrofit the
