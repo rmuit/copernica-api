@@ -595,12 +595,12 @@ class CopernicaRestClient
         }
         // We expect the count of data fetched to be exactly equal to the
         // limit, unless we've fetched all data - then the count can be less.
-        if ($result['start'] + $result['count'] == $result['total']) {
-            if ($result['count'] > $result['limit']) {
-                throw new RuntimeException("Unexpected structure in response from Copernica API: 'count' value (" . json_encode($result['count']) . ") is not equal to 'limit' (" . json_encode($result['limit']) . ').');
+        if ($struct['start'] + $struct['count'] == $struct['total']) {
+            if ($struct['count'] > $struct['limit']) {
+                throw new RuntimeException("Unexpected structure in response from Copernica API: 'count' value (" . json_encode($struct['count']) . ") is not equal to 'limit' (" . json_encode($struct['limit']) . ').');
             }
-        } elseif ($result['count'] !== $result['limit']) {
-            throw new RuntimeException("Unexpected structure in response from Copernica API: 'count' value (" . json_encode($result['count']) . ") is not equal to 'limit' (" . json_encode($result['limit']) . '), which should be the case when we only fetched part of the result.');
+        } elseif ($struct['count'] !== $struct['limit']) {
+            throw new RuntimeException("Unexpected structure in response from Copernica API: 'count' value (" . json_encode($struct['count']) . ") is not equal to 'limit' (" . json_encode($struct['limit']) . '), which should be the case when we only fetched part of the result.');
         }
     }
 
