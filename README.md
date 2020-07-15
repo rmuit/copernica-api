@@ -1,6 +1,15 @@
 Copernica REST API PHP tools [![Build Status](https://travis-ci.com/rmuit/sharpspring-restapi.svg?branch=master)](https://travis-ci.com/rmuit/copernica-api)
 ============================
 
+**Please note:** The CopernicaRestClient has already changed its interface since
+the 1.0 release. While it is expected to be stable, we'll wait a little while
+before tagging a 2.0 version. (There are TODOs in the code for some likely
+speed improvements, and we want to be sure we don't need to break compatibility
+in order to support them.) In the meantime, using master is recommended over
+v1.0.
+
+--
+
 This builds on the CopernicaRestAPI class which Copernica offer for download,
 and adds an API Client class containing some useful helper methods to work
 more smoothly with returned data.
@@ -12,30 +21,36 @@ handling/documentation of errors.
 
 ## Usage
 
-Only the REST API client is detailed here; the rest is left for the user to
-discover.
+Only the basic API methods in CopernicaRestAPI are documented; the rest is left
+for developers to discover if they feel so inclined.
 
-The get() call is usable, but it is recommended to call one of the three below
-'wrapper' methods instead, which validate the API response and guarantee to
-only return valid data, or throw an exception otherwise. It is up to the
-caller to know which wrapper method is applicable to any specific API endpoint.
-
-You likely want to wrap all get*() calls in try/catch blocks; below example
-only documents it for getEntity() because it's the only call that can throw
-exceptions for cases that are not technically errors.
+CopernicaRestAPI contains get() / post() / put() and delete() calls (just like
+the standard CopernicaRestAPI); it also contains two extra calls getEntity()
+and getEntities() which do some extra checks and are guaranteed to return an
+'entity' or 'list of entities' instead. (An 'entity' is something like a
+profile / subprofile / emailing / database; likely anything that has an ID
+value.) It is hopefully self evident which of the three 'get' methods
+can best be used, based on the API endpoint.
 ```php
-$client = new \CopernicaApi\CopernicaRestClient(TOKEN);
+use CopernicaApi\CopernicaRestClient;
+
+$client = new CopernicaRestClient(TOKEN);
+// When using this library to code new processes, it is recommended to throw
+// exceptions for any error encountered. (Using false or 0 instead of
+// CopernicaRestClient::NONE is fine.)
+$client->suppressApiCallErrors(CopernicaRestClient::NONE);
+
+$new_id = $client->post("database/$db_id/profiles", ['fields' => ['email' => 'rm@wyz.biz']]);
+$success = $client->put("profile/$new_id", ['email' => 'info@wyz.biz']);
+
+// Get non-entity data (i.e. data that has no 'id' property).
+$stats = $client->get("publisher/emailing/$id/statistics");
 
 // Get a single entity, making sure that it still exists:
-try {
-    $profile = $client->getEntity("profile/$id");
-}
-catch (\RuntimeException $e) {
-    // Either something went wrong here, or the profile was deleted (which the
-    // API endpoint does not treat as an error, but you probably want to). If
-    // you want to have the response indicating "removed" returned instead,
-    // then pass TRUE as the third argument to the getEntity() call.
-}
+$profile = $client->getEntity("profile/$id");
+// If for some reason you want to also have entity data returned if the entity
+// was 'removed' from Copernica: (An exception gets thrown by default.)
+$profile = $client->getEntity("profile/$id", [], CopernicaRestClient::GET_ENTITY_IS_REMOVED);
 
 // Get a list of entities; this will check the structure with its
 // start/total/count/etc properties, and return only the relevant 'data' part:
@@ -46,32 +61,8 @@ $mailings = $client->getEntities('publisher/emailings');
 while ($next_batch = $client->getEntitiesNextBatch()) {
     $mailings = array_merge($mailings, $next_batch);
     // It is possible to pause execution and fetch the next batch in a separate
-    // PHP thread, with some extra work; check saveState() for this.
+    // PHP thread, with some extra work; check backupState() for this.
 }
-
-// Get non-entity data (i.e. data that has no 'id' property). This is preferred
-// over get() in cases where you don't want to have to check if the response
-// contains an 'error' value rather than the requested data. The only
-// difference between getData() and getEntity() is the extra checks on presence
-// of an id property, and 'removed-ness'.
-$stats = $client->getData("publisher/emailing/$id/statistics");
-```
-
-The post() / put() calls behave a bit differently from those in Copernica's
-example class, in that they throw an exception where the example class would
-return False. (I estimate that is easier for most code that wants to just
-concentrate on non-failure paths and move any error handling outside of the
-regular code flow.) However, there are no distinctive errors yet; until we get
-examples, every instance of returning False throws a RuntimeException with
-code 1. This will hopefully change as more knowledge is gained about exact
-error conditions / messages.
-```php
-$new_id = $client->post("database/$db_id/profiles", ['email' => 'rm@wyz.biz']);
-$success = $client->put("profile/$new_id", ['email' => 'info@wyz.biz']);
-// If you don't want the exception behavior, you can use sendData() at least
-// for now (maybe until a next major version of this library). It's the same
-// as the example class' sendData() except the last argument is a boolean.
-$success_or_failure = $client->sendData("profile/$new_id", ['email' => 'info@wyz.biz'], [], true);
 ```
 
 The response of some API calls contain lists of other entities inside an entity.
@@ -90,6 +81,45 @@ $first_collection_fields = $client->getEmbeddedEntities($first_collection, 'fiel
 // Note if you only need the collections of one database, or the fields of one
 // collection, it is recommended to call the dedicated API endpoint instead.
 ```
+
+### Error handling
+
+If CopernicaRestClient methods receive an invalid response / fail to get any
+response from the API, they usually throw an exception. However, callers can
+influence this behavior and make the class method just return the invalid
+response instead. The basic things to know are:
+
+- The behavior can be influenced globally by setting certain types of errors
+  to 'suppress' (i.e. not throw exceptions for), using
+  `suppressApiCallErrors()`. The same values can also be passed as an argument
+  to individual calls.
+
+- Whether some responses are 'invalid', may depend on the specific application,
+  like:
+  - By default an exception is thrown if a single entity is queried (e.g.
+    `getEntity("profile/$id")` which has been removed in the meantime. However,
+    the API actually returns an entity with the correct ID, all fields empty,
+    and a 'removed' property with a date value. If this empty entity should be
+    returned without throwing an exception: see above example code.
+
+- There is currently one case where the class is not strict, but application
+  code can benefit by setting stricter rules:
+  - calls to post() can return True (because the standard CopernicaRestApi
+    class' code seems to suggest that it is possible for the API to return
+    a 'success' response but not specify an ID). However, in many cases
+    application code probably wants to be sure that post() returns an actual
+    ID value. This can be done by
+    `suppressApiCallErrors(CopernicaRestClient::NONE)`, which will make a
+    True return value throw an exception instead. Individual calls can still
+    be made to return True with
+    `post(<url>, <data>, CopernicaRestClient::POST_RETURNS_NO_ID)`.
+
+- There are loads of other constants which are only there 'just to be sure',
+  influenced by the specific structure of the standard CopernicaRestAPI code.
+  Go ahead and read the code if you want to, but it's probably best to ignore
+  them unless you get unexpected exceptions. (In that case, a report is
+  appreciated, because this code or this README might need changes.)
+
 
 ## Some more details
 
@@ -113,21 +143,30 @@ process that can insert/update profiles and related subprofiles.
 
 It is recommended to not use CopernicaRestAPI directly. I'm using it but
 keeping it in a separate file, for a combination of overlapping reasons:
-- I don't have a reason yet to change the code around doing HTTP requests too
-  much because it works well enough (despite it feeling somewhat clunky and
-  needing a few fixes).
-- The API responses may have undocumented features (e.g. specific error codes /
-  messages / non-JSON being returned in certain circumstances) that I don't
-  know about yet, and I don't want to make assumptions about this until there
-  is a real need to.
+- Even though Copernica's API servers are quite stable and the API behavior is
+  documented in https://www.copernica.com/en/documentation/restv2/rest-requests,
+  there are still unknowns. (Mostly in the body/headers returned by the
+  response, e.g whether POST requests could sometimes not return an ID; see
+  POST_RETURNS_NO_ID above.) So, I was afraid of upsetting my live processes by
+  moving completely away from the standard code (and writing code that was in
+  itself more consistent by throwing exceptions for every Curl error or HTTP
+  4xx/5xx response) until I observed more behavior in practice. I'd rather move
+  slowly and carefully than have the chance of a bunch of errors in my
+  processes because of making some wrong assumptions.
 - This way, we can more easily track if Copernica makes changes to their
   reference class, and we can merge them in here fairly easily.
-- Besides the fixes, I needed to extend the class with extra functionality
-  interpreting the responses, which was not tied to the HTTP requests
-  themselves. Separating that extra functionality out seemed to make sense.
-- Because of this separation, CopernicaRestClient could wrap another class
-  which executes the HTTP requests in a different way (e.g. using Guzzle),
-  without needing to touch (most of) the code which interprets the responses.
+- Separating extra functionality interpreting the responses (e.g. getEntity() /
+  getEntities()) from the code doing HTTP requests, seemed to make sense.
+
+The approach does have disadvantages, though:
+
+- Introducing a bunch of 'just to be sure' constants to suppress exceptions in
+  possible future unknown cases, which are strictly tied to the
+  CopernicaRestAPI structure... is awkward.
+- Some error circumstances (that probably happen very infrequently), like
+  Curl errors or HTTP 4xx/5xx responses during PUT requests, are still obscured.
+
+We'll see how this evolves in the future.
 
 ### Extra branches
 

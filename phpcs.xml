@@ -18,5 +18,13 @@
             adhering to a rough standard.
         -->
         <exclude name="Generic.Files.LineLength"/>
+        <!--
+            "Visibility must be declared on all constants if your project
+            supports PHP 7.1 or later". - this seems weird to me. Should this
+            warning not be triggered only if the _minimum_ version is 7.1?
+            That is apparently not the case right now. I'm excluding this
+            because I don't want to change my code to suit phpcs.
+        -->
+        <exclude name="PSR12.Properties.ConstantVisibility.NotFound"/>
     </rule>
 </ruleset>

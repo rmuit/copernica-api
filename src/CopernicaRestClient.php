@@ -10,6 +10,132 @@ use RuntimeException;
  */
 class CopernicaRestClient
 {
+    // @TODO define constant which means 'defaults for v2.0". Set as default.
+    /**
+     * Equivalent to "none", if one likes using constants instead of integers.
+     *
+     * Usable with suppressApiCallErrors() / a relevant argument to method
+     * calls; use this value to always throw exceptions (i.e. suppress none) in
+     * real or perceived error situations - thereby ensuring that values
+     * returned from calls are always valid and usable.
+     *
+     * For non-GET calls, this not ensured yet; future versions of this class
+     * may throw exceptions in more cases, to make it so. See
+     * suppressApiCallErrors() for details.
+     */
+    const NONE = 0;
+
+    /**
+     * Equivalent to "all", if one likes using constants instead of integers.
+     *
+     * Usable for suppressApiCallErrors() / a relevant argument to method
+     * calls; use this value to suppress all exceptions being thrown - but
+     * beware this implies remaining unsure that returned values truly indicate
+     * success.
+     */
+    const ALL = -1;
+
+    /**
+     * Value to use for method argument / suppressApiCallErrors() as a bitmask:
+     *
+     * Represents a HTTP GET call resulting in a Curl error. (No similar value
+     * exists yet for non-GET calls; it will likely be introduced as errors are
+     * observed in practice.)
+     */
+    const CURL_ERROR_GET = 1;
+
+    /**
+     * Value to use for method argument / suppressApiCallErrors() as a bitmask:
+     *
+     * Represents a REST API GET endpoint returning a response of type
+     * "application/json" whose body cannot be decoded as JSON. (This is
+     * the only case where the standard CopernicaRestAPI class threw an
+     * exception.) If suppressed, this will return the non-decoded contents.
+     */
+    const GET_RETURNS_INVALID_JSON = 2;
+
+    /**
+     * Value to use for method argument / suppressApiCallErrors() as a bitmask:
+     *
+     * Represents a REST API GET endpoint returning either a valid response of
+     * type other than "application/json", or a response of of type
+     * "application/json" whose body contains a (JSON encoded) value that is
+     * not an array. (The default CopernicaRestAPI class does not let us
+     * distinguish between the two cases of string values.)
+     *
+     * get() hardcodes a small amount of API calls which are allowed to return
+     * string values by default, and makes sure to only return arrays in all
+     * other cases, for consistency / convenience to the caller. That is: if
+     * non-arrays are returned, an exception is thrown. If other API calls
+     * unexpectedly also return non-arrays as valid values, callers may need to
+     * pass this value as the third argument to get() - or to
+     * suppressApiCallErrors().
+     *
+     * Note a get() call may still return a non-array value if other values are
+     * set (i.e. exceptions are not thrown in other cases).
+     */
+    const GET_RETURNS_NON_ARRAY = 4;
+
+    /**
+     * Value to use for method argument / suppressApiCallErrors() as a bitmask:
+     *
+     * Represents a REST API GET endpoint returning a response body containing
+     * valid JSON containing an "error" entry. By default, an exception will
+     * be thrown, specifying the accompanying error message.
+     */
+    const GET_RETURNS_ERROR_MESSAGE = 8;
+
+    /**
+     * Value to use for method argument / suppressApiCallErrors() as a bitmask:
+     *
+     * Represents a REST API GET endpoint returning a response body containing
+     * valid JSON containing an 'entity' whose "removed" property is not false.
+     */
+    const GET_ENTITY_IS_REMOVED = 16;
+
+    /**
+     * Value to use for method argument / suppressApiCallErrors() as a bitmask:
+     *
+     * Represents a call to CopernicaRestAPI::post() returning false, which
+     * points to a HTTP 400 "bad request" being returned - or no HTTP response
+     * code being available.
+     */
+    const POST_RETURNS_FALSE = 32;
+
+    /**
+     * Value to use for method argument / suppressApiCallErrors() as a bitmask:
+     *
+     * Represents a call to CopernicaRestAPI::post() returning true rather than
+     * an ID. (It seems likely that very many HTTP POST calls are always
+     * supposed to return an "X-Created:" header with an ID value, and absence
+     * of this indicates some kind of error.)
+     *
+     * This class does not (yet?) know the particulars of every single call, so
+     * throwing exceptions is suppressed by default for these cases, for fear
+     * of causing unwanted exceptions. Code which knows that a HTTP POST call
+     * must return an ID, is encouraged to negate this behavior by unsetting
+     * this bit or passing the appropriate value (e.g. NONE) to the third
+     * argument of post() calls.
+     *
+     * Note the naming suggests that this might also cover post() returning
+     * false, but that isn't the case.
+     */
+    const POST_RETURNS_NO_ID = 64;
+
+    /**
+     * Value to use for method argument / suppressApiCallErrors() as a bitmask:
+     *
+     * Represents a call to CopernicaRestAPI::put() returning false, which
+     * points to a HTTP 400 "bad request" being returned - or no HTTP response
+     * code being available.
+     */
+    const PUT_RETURNS_FALSE = 128;
+
+    /**
+     * Indicates whether API calls may throw exceptions in error situations.
+     */
+    protected $suppressApiCallErrors = self::POST_RETURNS_NO_ID;
+
     /**
      * Name of a factory class that instantiates the actual connection class.
      *
@@ -88,72 +214,141 @@ class CopernicaRestClient
     }
 
     /**
-     * Executes a GET request.
+     * Sets certain types of error to not throw an exception.
      *
-     * Preferably call one of the wrapper functions instead.
+     * Set -1/ALL to mean "never", 0/false/NONE (recommended) to mean "in all
+     * real or perceived error situations", or use defined constants as bitmask
+     * values.
      *
-     * @param string $resource
-     *   Resource (URI relative to the versioned API) to fetch data from.
-     * @param array $parameters
-     *   (Optional) parameters for the API query.
+     * Error handling in this class is imperfect. Our ideal is to have the code
+     * throw exceptions for any 'error' returned from the server / encountered
+     * during API communication, so calling code can assume everything is OK on
+     * its regular execution path. That is currently not possible because
+     * - We don't have full detailed info/documentation about error conditions;
+     *   https://www.copernica.com/en/documentation/restv2/rest-requests
+     *   documents some/most behavior but the standard CopernicaRestAPI class'
+     *   code suggests some extra behavior which we don't have full insight in.
+     * - The standard class doesn't inspire the utmost confidence that it's
+     *   taking care of errors.
+     * We so far have observed a few errors in the wild, which are noted in
+     * code comments of the relevant functions (marked "API NOTE");
      *
-     * @return array
-     *   The JSON-decoded response body.
+     * So... in order to achieve our ideal / ensure errors don't go unnoticed
+     * and code doesn't have to perform its own unspecified checks, we may
+     * gradually start throwing more exceptions for fringe cases as we
+     * encounter them. Those exceptions however will introduce behavior that
+     * is incompatible with the current situation. Code that prefers having a
+     * very consistent situation in throwing errors -at the cost of being less
+     * sure that returned values truly indicate success- may set this property.
      *
-     * @see getData()
-     * @see getEntity()
-     * @see getEntities()
+     * In addition, sometimes the question of what constitutes a real error is
+     * dependent on application logic. (Example: a deleted entity gets
+     * re-deleted with a consecutive API call and the API returns HTTP 400 the
+     * second time.) In these cases, while we could always throw an exception,
+     * it makes sense for the caller to not always have to deal with catching
+     * those.
+     *
+     * The bitmask values passed to this function are a combination of these
+     * two types: 'internal-only logic which might change as we learn more' and
+     * 'application logic that makes sense to be tweakable'. Bitmask values in
+     * the second category are documented with the method documentation; others
+     * only in code comments.
+     *
+     * This method sets default behavior; methods also have corresponding
+     * arguments to influence this behavior for single API calls. Those
+     * arguments overwrite the default, so in order to add to it instead, pass
+     * $this->getSuppressedApiCallErrors() | EXTRA_CONSTANT.
+     *
+     * @param int $types
+     *   The types of errors to suppress exceptions for. 0/false means the same
+     *   as the NONE constant.
      */
-    public function get($resource, array $parameters = array())
+    public function suppressApiCallErrors($types)
     {
-        // Below get() call throws a RuntimeException if a Curl error was
-        // encountered or if the response indicated application/json but the
-        // body did not contain JSON. A response is returned if:
-        // - Either the response was marked as content type application/json
-        //   and is valid JSON; in this case we get the decoded JSON returned.
-        // - Or the response was not marked as content type application/json;
-        //   in this case we get the literal string returned.
-        // This means it's impossible to distinguish JSON encoded strings from
-        // strings. Since we at this moment do not know any API endpoint that
-        // is meant to return either, we throw an exception in this case. If
-        // a plain string is ever seen to be an acceptable return value, that
-        // will be cause for changing this code - and in the meantime, callers
-        // can call CopernicaRestAPI::get() directly instead, to circumvent the
-        // RuntimeException.
-        $response = $this->getApiConnection()->get($resource, $parameters);
-        if (is_string($response)) {
-            throw new RuntimeException("Response is a string (or was a JSON encoded string): \"$response\".");
-        }
+        $this->suppressApiCallErrors = $types;
+    }
 
-        return $response;
+    /**
+     * Gets the indicator of which types or error do not throw an exception.
+     */
+    public function getSuppressedApiCallErrors()
+    {
+        return $this->suppressApiCallErrors;
     }
 
     /**
      * Executes a POST request.
      *
-     * PLEASE NOTE: we throw a RuntimeException when the return value seems to
-     * indicate error, mainly for forward compatibility reasons (so we can
-     * throw varying RuntimeExceptions after we figure out how to differentiate
-     * various errors). For now, there is only one type of error "reason
-     * unknown" with code 1. Callers that want False returned instead, like the
-     * original CopernicaRestAPI class does, should call sendData().
+     * Please note an imperfection in error handling: (See
+     * suppressApiCallErrors() for general remarks on why this method may start
+     * throwing more exceptions over time.)
+     *
+     * Our current default behavior is to throw a RuntimeException when the
+     * return value from CopernicaRestAPI::post() seems to indicate error (by
+     * being false), but not to do this when the return value is true. However,
+     * it is not at all unlikely that the CopernicaRestAPI class returns true
+     * instead, for some strange errors. (Because any HTTP codes higher than
+     * 400 likely return true; see the code: a HTTP response code other than
+     * 400 returns either an ID found in a header or true.)
+     *
+     * We do not (yet?) know the particulars of HTTP responses and how they
+     * vary over API calls, so this method cannot make assumptions (yet?) about
+     * what a return value of true means. But callers which are sure they need
+     * to have an ID returned instead, are encouraged to pass 0/NONE as the
+     * third argument, or to set this (unset POST_RETURNS_NO_ID) globally
+     * through suppressApiCallErrors(), so that calls are guaranteed to either
+     * return an ID of throw an exception.
      *
      * @param string $resource
      *   Resource (URI relative to the versioned API) to send data to.
      * @param array $data
      *   (Optional) data to send.
+     * @param int|null $suppress_errors
+     *   (Optional) suppress throwing exceptions for certain cases; see
+     *   suppressApiCallErrors(). It is recommended to pass 0, for any caller
+     *   which knows that's safe; see method comments.
      *
      * @return mixed
-     *   ID of created entity, or simply true to indicate success.
+     *   ID of created entity, or simply true/false to indicate success/failure.
+     *   (This description comes from CopernicaRestAPI but it seems doubtful
+     *   that true actually indicates success for most cases though. False is
+     *   only returned for nonstandard $suppress_errors values.)
      *
      * @throws \RuntimeException
      *   If the wrapped class returns False.
+     *
+     * @see CopernicaRestClient::suppressApiCallErrors()
      */
-    public function post($resource, array $data = array())
+    public function post($resource, array $data = array(), $suppress_errors = null)
     {
+        if (!isset($suppress_errors)) {
+            $suppress_errors = $this->suppressApiCallErrors;
+        }
+
+        // This code makes assumptions about detailed behavior of the below
+        // call to post() because that's the only way to work with the default
+        // CopernicaRestAPI class effectively. The exception messages show the
+        // need for better error handling, probably by patching
+        // CopernicaRestAPI to recognize HTTP response codes and Curl errors.
+        // The reason we haven't done this yet is... we haven't observed many
+        // of these situations yet. Which is a sign of the stability of
+        // Coprenica's API servers.
         $result = $this->getApiConnection()->post($resource, $data);
-        if ($result === false) {
-            throw new RuntimeException("POST request returned False; reason unknown.", 1);
+        if ($result === false && !($suppress_errors && self::POST_RETURNS_FALSE)) {
+            // API NOTE:  One error we've seen when POSTing data to one
+            // Copernica db (but not another one) was that addresses@126.com
+            // were disallowed. If you try to enter them in the UI, you get a
+            // message "spambots". This REST call will return no indicative
+            // message headers and a body {"error":{"message":"Failed to create
+            // profile"}} - which implies we should get the message body in
+            // CopernicaRestAPI::post() rather than returning false. That's a
+            // TODO; I'm not doing it yet because above message isn't
+            // descriptive anyway. So I'd want to see more practical situations
+            //  before changing CopernicaRestAPI code.
+            throw new RuntimeException("put() returned false (likely POST $resource returned HTTP 400); reason unknown.", 1);
+        }
+        if ($result === true && !($suppress_errors && self::POST_RETURNS_NO_ID)) {
+            throw new RuntimeException("POST $resource returned no 'X-Created: ID' header in the call, which likely points to a HTTP failure response being returned, or the connection being unsuccessful. Details are unavailable.", 2);
         }
         return $result;
     }
@@ -161,140 +356,199 @@ class CopernicaRestClient
     /**
      * Executes a PUT request.
      *
-     * PLEASE NOTE: we throw a RuntimeException when the return value seems to
-     * indicate error, mainly for forward compatibility reasons (so we can
-     * throw varying RuntimeExceptions after we figure out how to differentiate
-     * various errors). For now, there is only one type of error "reason
-     * unknown" with code 1. Callers that want False returned instead, like the
-     * original CopernicaRestAPI class does, should call sendData().
+     * This code may start throwing more exceptions over time (unless a
+     * relevant value is passed in the $suppress_errors argument / set globally
+     * through suppressApiCallErrors(). See comments at suppressApiCallErrors()
+     * for more information.)
      *
      * @param string $resource
      *   Resource (URI relative to the versioned API) to send data to.
      * @param array $data
      *   Data to send.
      * @param array $parameters
-     *   (Optional) parameters for the API query.
+     *   (Optional) parameters for the API query. (This parameter is taken over
+     *   from CopernicaRestAPI but it is unclear which PUT requests need
+     *   parameters, at the time of writing this method.)
+     * @param int|null $suppress_errors
+     *   (Optional) suppress throwing exceptions for certain cases; see
+     *   suppressApiCallErrors().
      *
      * @return mixed
-     *   ID of created entity, or simply true to indicate success.
+     *   ID of created entity, or simply true/false to indicate success/failure.
+     *   (This description comes from CopernicaRestAPI but we're not sure of
+     *   any PUT call returning an ID yet. False is only returned for
+     *   nonstandard $suppress_errors values.)
      *
      * @throws \RuntimeException
      *   If the wrapped class returns False.
+     *
+     * @see CopernicaRestClient::suppressApiCallErrors()
      */
-    public function put($resource, array $data, array $parameters = array())
+    public function put($resource, array $data, array $parameters = array(), $suppress_errors = null)
     {
+        if (!isset($suppress_errors)) {
+            $suppress_errors = $this->suppressApiCallErrors;
+        }
+
+        // This code makes assumptions about detailed behavior of the below
+        // call to put() because that's the only way to work with the default
+        // CopernicaRestAPI class effectively.
         $result = $this->getApiConnection()->put($resource, $data, $parameters);
-        if ($result === false) {
-            throw new RuntimeException("PUT request returned False; reason unknown.", 1);
+        if ($result === false && !($suppress_errors && self::PUT_RETURNS_FALSE)) {
+            throw new RuntimeException("put() returned false (likely PUT $resource returned HTTP 400); reason unknown.", 1);
         }
         return $result;
     }
 
     /**
-     * Executes a (PUT/POST) request to create/edit data.
-     *
-     * @param string $resource
-     *   Resource (URI relative to the versioned API) to send data to.
-     * @param array $data
-     *   (Optional) data to send.
-     * @param array $parameters
-     *   (Optional) parameters for the API query.
-     * @param bool $put
-     *   (Optional) if True, use PUT method (which is typically used for
-     *   updating data). By default/if False, POST (create) is used.
-     *
-     * @return mixed
-     *   ID of created entity, or simply true/false to indicate success/failure.
-     */
-    public function sendData($resource, array $data = array(), array $parameters = array(), $put = false)
-    {
-        // Force some compatibility in case someone is porting code from the
-        // CopernicaRestAPI class and still sending a string.
-        $method = is_string($put) ? $put : ($put ? 'PUT' : 'POST');
-        // API NOTE: Returning False for errors of course isn't very verbose.
-        // One error we've seen when POSTing data to Copernica's db (only their
-        // live db, not test) was that addresses@126.com were disallowed. If
-        // you try to enter them in the UI, you get a message "spambots". This
-        // REST call will return no indicative message headers and a body
-        // {"error":{"message":"Failed to create profile"}} - so this means we
-        // can throw an exception with this message. That's a TODO; I'm not
-        // doing it yet because
-        // - The decision to start throwing exceptions, while probably right
-        //   for POST/PUT calls, has implications for code, so I'd ideally only
-        //   change things once, to something that is exactly right;
-        // - Above message isn't descriptive anyway. So I'd want to see more
-        //   practical situations before changing code.
-        // - There could be an API endpoint that just returns the value False.
-        //   (Which currently would make CopernicaRestAPI::sendData() return
-        //   True, which would be strange, but... hey, it's not impossible.)
-        return $this->getApiConnection()->sendData($resource, $data, $parameters, $method);
-    }
-
-    /**
      * Executes a DELETE request.
      *
-     * PLEASE NOTE: We may at some point decide to break compatibility re.
-     * error handling, and start throwing RuntimeExceptions (once we know more
-     * about error codes). Handling (Runtime)Exceptions might aid compatibility
-     * with future versions of this library.
+     * This code may start throwing more exceptions over time (unless a
+     * relevant value is passed in the $suppress_errors argument / set globally
+     * through suppressApiCallErrors(). See comments at suppressApiCallErrors()
+     * for more information.)
      *
      * @param string $resource
      *   Resource (URI relative to the versioned API).
+     * @param int|null $suppress_errors
+     *   (Optional) suppress throwing exceptions for certain cases; see
+     *   suppressApiCallErrors(). This parameter has no effect but may have in
+     *   the future (in the sense that setting it to a relevant value will
+     *   prevent exceptions from starting to be thrown in the future).
      *
      * @return bool
      *   ?
+     *
+     * @see CopernicaRestClient::suppressApiCallErrors()
+     *
+     * @todo Implement handling of HTTP 204, check "X-deleted" header. See
+     *   https://www.copernica.com/en/documentation/restv2/rest-requests.
      */
-    public function delete($resource)
+    public function delete($resource, $suppress_errors = null)
     {
         return $this->getApiConnection()->delete($resource);
     }
 
     /**
-     * Executes a GET request; returns a response that does not include 'error'.
-     *
-     * This method checks if the returned response contains an 'error' value,
-     * which any code that calls get() would likely need to do by itself.
+     * Executes a GET request.
      *
      * @param string $resource
      *   Resource (URI relative to the versioned API) to fetch data from.
      * @param array $parameters
-     *   (Optional) parameters for the API query. (It isn't clear that there's
-     *   any call that actually needs this.)
+     *   (Optional) parameters for the API query.
+     * @param int|null $suppress_errors
+     *   (Optional) suppress throwing exceptions for certain cases; see
+     *   suppressApiCallErrors().
      *
-     * @return array
-     *   The JSON-decoded response body (that does not have an 'error' value).
+     * @return array|mixed
+     *   The JSON-decoded response body; can be other things and/or a non-array
+     *   value if throwing exceptions is suppressed.
      *
-     * @throws \RuntimeException
-     *   If the get() call threw a RuntimeException, or if the returned
-     *   response includes an 'error' value. See checkResultForError() for
-     *   error codes.
+     * @see CopernicaRestClient::suppressApiCallErrors()
+     * @see CopernicaRestClient::getEntity()
+     * @see CopernicaRestClient::getEntities()
      */
-    public function getData($resource, array $parameters = array())
+    public function get($resource, array $parameters = array(), $suppress_errors = null)
     {
-        $result = $this->get($resource, $parameters);
-        $this->checkResultForError($result);
+        if (!isset($suppress_errors)) {
+            $suppress_errors = $this->suppressApiCallErrors;
+        }
+
+        // This code makes assumptions about detailed behavior of the below
+        // call to get() because that's the only way to work with the default
+        // CopernicaRestAPI class effectively.
+        try {
+            $result = $this->getApiConnection()->get($resource, $parameters);
+        } catch (RuntimeException $e) {
+            // Code 0 is one specific error, indicating invalid JSON. (This is
+            // the only situation in the original CopernicaRestAPI class that
+            // threw an exception.) Others are Curl errors.
+            if ($e->getCode()) {
+                // API NOTES:
+                // - Curl occasionally returns error 7 "Failed to connect" (and
+                //   get() returns a string value, likely empty string, though
+                //   we're not sure yet)
+                // - We've also seen error 52 "Empty reply from server" - for
+                //   a 'subprofiles' query for a 'large' collection. This
+                //   suggests timeout-like conditions are possible on the
+                //   server end, which ideally should return a 4xx/5xx HTTP
+                //   code instead of nothing at all.
+                // We've patched the CopernicaRestAPI class to throw an
+                // exception for Curl errors. The following suppression would
+                // fall back to the situation before the patch: return the
+                // original response contents. (Which is probably nothing,
+                // since we got a Curl error, but we're not absolutely sure of
+                // that.)
+                if (!($suppress_errors && self::CURL_ERROR_GET)) {
+                    throw $e;
+                }
+                if (preg_match('/Response contents: \"(.*?)\"/', $e->getMessage(), $matches)) {
+                    return $matches[1];
+                }
+                // This situation likely cannot happen.
+                return '';
+            } elseif (!($suppress_errors && self::GET_RETURNS_INVALID_JSON)) {
+                throw $e;
+            }
+            // The caller doesn't want invalid JSON to throw an exception, so
+            // we try to return the original input unchecked.
+            if (preg_match('/^Unexpected input: (.*)$/', $e->getMessage(), $matches)) {
+                return $matches[1];
+            }
+            // This situation likely cannot happen.
+            return '';
+        }
+
+        // Either the response had content type "application/json" and is valid
+        // JSON; we got the decoded JSON. Or the response did not have content
+        // type "application/json"; we got the literal string. This means it's
+        // impossible to distinguish JSON encoded strings from other strings.
+        // In the default situation this doesn't matter to us because we only
+        // accept array values.
+        if (!is_array($result)) {
+            if (
+                // Some paths, hardcoded here, are always allowed to return strings.
+                !(is_string($result) && in_array(substr($result, -4), ['/xml', '/csv'], true))
+                && !($suppress_errors && self::GET_RETURNS_NON_ARRAY)
+            ) {
+                // We throw with code 0, just like invalid JSON.
+                throw new RuntimeException("Response body is not a JSON encoded array: \"$result\".");
+            }
+        } elseif (!($suppress_errors && self::GET_RETURNS_ERROR_MESSAGE)) {
+            $this->checkResultForError($result);
+        }
+
         return $result;
     }
 
     /**
      * Executes a GET request that returns a single entity.
      *
-     * This method checks if the returned response contains an ID value, or if
-     * the entity has been removed (because the REST API still returns a
-     * response for removed entities), which any code that calls get() /
-     * getData() would likely need to do by itself.
+     * This method always throws an exception if an ID value is not found in
+     * the response body; code will likely want to always call this method
+     * instead of get() for a specific set of paths, so they don't need to
+     * check this by themselves.
+     *
+     * By default, an exception is also thrown if the entity is removed (i.e.
+     * the structure of an entity is valid but the 'removed' property has a
+     * nonempty value); this can be suppressed by passing the
+     * GET_ENTITY_IS_REMOVED bit to the $suppress_errors argument or setting it
+     * through suppressApiCallErrors().
+     *
+     * No other bit values for the 'suppress' method/argument have any effect;
+     * other exception types are thrown regardless of this value, because this
+     * method is explicitly meant to return a valid entity.
      *
      * @param string $resource
      *   Resource (URI relative to the versioned API) to fetch data from.
      * @param array $parameters
-     *   (Optional) parameters for the API query. (It isn't clear that there's
-     *   any call that actually needs this.)
-     * @param bool $throw_if_removed
-     *   (Optional) if false, do not throw an exception if the entity was
-     *   removed, but return the API response.
+     *   (Optional) parameters for the API query.
+     * @param int|null $suppress_errors
+     *   (Optional) suppress throwing exceptions for certain cases. See above:
+     *   only GET_ENTITY_IS_REMOVED currently has any effect.
      *
      * @return array
-     *   The JSON-decoded response body.
+     *   The JSON-decoded response body containing an entity.
      *
      * @throws \RuntimeException
      *   If the get() call threw a RuntimeException, if the entity was removed
@@ -302,19 +556,23 @@ class CopernicaRestClient
      *   response includes an 'error' value. See checkResultForError() for
      *   error codes.
      */
-    public function getEntity($resource, array $parameters = array(), $throw_if_removed = true)
+    public function getEntity($resource, array $parameters = array(), $suppress_errors = null)
     {
-        $result = $this->get($resource, $parameters);
-        $this->checkResultForError($result);
+        $result = $this->get($resource, $parameters, self::NONE);
         // Some of the calls (like publisher/documents) have 'id' property;
         // some (like profiles, collections) have 'ID' property.
         if (empty($result['id']) && empty($result['ID'])) {
             throw new RuntimeException("Entity returned from $resource call does not contain 'id'.");
         }
+
         // We do not know for sure but have seen this with profiles, so for now
         // will assume it's with every entity: 'removed' indicates the date
-        // when the item was removed. the 'fields' array is empty.
-        if ($throw_if_removed && !empty($result['removed'])) {
+        // when the item was removed. the 'fields' array still contains all
+        // fields, but with empty string as values.
+        if (!isset($suppress_errors)) {
+            $suppress_errors = $this->suppressApiCallErrors;
+        }
+        if (!empty($result['removed']) && !($suppress_errors && self::GET_ENTITY_IS_REMOVED)) {
             // We don't have a 'code space' yet and will just add our own
             // codes. If Copernica ever gets error codes, we should just create
             // a new class that responds with their codes.
@@ -330,6 +588,9 @@ class CopernicaRestClient
      * for a list of entities, and if each individual entity is also valid (has
      * an ID value).
      *
+     * The bitmask set through suppressApiCallErrors() has no effect on this
+     * method because it is explicitly meant to return a list of valid entities.
+     *
      * @param string $resource
      *   Resource (URI relative to the versioned API) to fetch data from.
      * @param array $parameters
@@ -344,7 +605,7 @@ class CopernicaRestClient
      */
     public function getEntities($resource, array $parameters = array())
     {
-        $result = $this->get($resource, $parameters);
+        $result = $this->get($resource, $parameters, self::NONE);
         $this->lastEntitiesResource = $resource;
         $this->lastEntitiesParameters = $parameters;
 
@@ -505,6 +766,7 @@ class CopernicaRestClient
             'next_start' => $this->nextEntitiesDatasetStart,
             'token' => $this->token,
             'version' => $this->version,
+            'suppress_errors' => $this->getSuppressedApiCallErrors(),
         ];
     }
 
@@ -524,6 +786,8 @@ class CopernicaRestClient
         if (
             isset($state['token']) && !is_string($state['token'])
             || isset($state['version']) && !is_string($state['version'])
+            || !isset($state['suppress_errors'])
+            || !is_int($state['suppress_errors'])
             || !isset($state['last_resource'])
             || !is_string($state['last_resource'])
             || !isset($state['last_parameters'])
@@ -537,6 +801,7 @@ class CopernicaRestClient
             // Not spending time on detailed errors. (Yet?)
             throw new LogicException('Invalid structure for state.');
         }
+        $this->suppressApiCallErrors($state['suppress_errors']);
         $this->lastEntitiesResource = $state['last_resource'];
         $this->lastEntitiesParameters = $state['last_parameters'];
         $this->lastEntitiesDatasetTotal = $state['last_total'];
@@ -569,7 +834,6 @@ class CopernicaRestClient
      */
     private function checkEntitiesMetadata(array $struct, array $parameters, $struct_descn)
     {
-        $this->checkResultForError($struct);
         // We will throw an exception for any unexpected value. That may seem
         // way too strict but at least we'll know when something changes.
         foreach (['start', 'limit', 'count', 'total', 'data'] as $key) {
