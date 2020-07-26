@@ -718,6 +718,12 @@ class CopernicaRestClient
      *
      * @throws \RuntimeException
      *   If the result metadata are not successfully verified.
+     *
+     * @todo check how we can support parameter total=false; specifying this
+     *   throws exceptions at the moment. According to Copernica, total=false
+     *   speeds things up.
+     * @todo the call for at least Profiles has a dataonly parameter. Check
+     *   what that does and try to support it. (It's also faster.)
      */
     public function getEntities($resource, array $parameters = array())
     {
@@ -837,6 +843,9 @@ class CopernicaRestClient
      *
      * @throws \RuntimeException
      *   If the property does not have the expected structure.
+     *
+     * @todo check how total=false (which currently throws exceptions) affects
+     *   $throw_is_incomplete, and document.
      */
     public function getEmbeddedEntities(array $entity, $property_name, $throw_if_incomplete = true)
     {
@@ -882,6 +891,7 @@ class CopernicaRestClient
             'next_start' => $this->nextEntitiesDatasetStart,
             'token' => $this->token,
             'version' => $this->version,
+            'factory_class' => $this->apiFactoryClassName,
             'suppress_errors' => $this->getSuppressedApiCallErrors(),
         ];
     }
@@ -901,7 +911,8 @@ class CopernicaRestClient
     {
         if (
             isset($state['token']) && !is_string($state['token'])
-            || isset($state['version']) && !is_string($state['version'])
+            || isset($state['version']) && filter_var($state['version'], FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]) === false
+            || isset($state['factory_class']) && !is_string($state['factory_class'])
             || !isset($state['suppress_errors'])
             || !is_int($state['suppress_errors'])
             || !isset($state['last_resource'])
@@ -924,6 +935,9 @@ class CopernicaRestClient
         $this->nextEntitiesDatasetStart = $state['next_start'];
         // We don't know if the current class has the same token/version.
         unset($this->api);
+        if (isset($state['factory_class'])) {
+            $this->apiFactoryClassName = $state['factory_class'];
+        }
         if (isset($state['token'])) {
             $this->token = $state['token'];
         }
@@ -947,6 +961,19 @@ class CopernicaRestClient
      *
      * @throws \RuntimeException
      *   If the result metadata are not successfully verified.
+     *
+     * @todo there's one thing we're not checking: whether the top level
+     *   has only 5 keys, i.e. whether there are no unknown properties, which
+     *   the caller will likely throw away unseen. I'd actually like to know if
+     *   Copernica introduces new properties - but I'm too scared to break
+     *   existing code by throwing an unnecessary exception. Maybe... make that
+     *   one optional somehow?
+     * @todo negative 'start' parameter returns the negative integer in 'start'
+     *   and zero count/items. Check what we want to do with that: likely not
+     *   throw an exception because we want to emulate Copernica?
+     * @todo check how we can support parameter total=false; specifying this
+     *   throws exceptions at the moment. According to Copernica, total=false
+     *   speeds things up.
      */
     private function checkEntitiesMetadata(array $struct, array $parameters, $struct_descn)
     {

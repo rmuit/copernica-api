@@ -18,11 +18,17 @@
             "CopernicaApi\\": "src"
         }
     },
+    "autoload-dev": {
+        "psr-4": {
+            "CopernicaApi\\Tests\\": "tests"
+        }
+    },
     "require": {
         "ext-curl": "*",
         "ext-json": "*"
     },
     "require-dev": {
-        "squizlabs/php_codesniffer": "^3.5"
+        "squizlabs/php_codesniffer": "^3.5",
+        "phpunit/phpunit": "^5|^9"
     }
 }

@@ -148,8 +148,8 @@ It is recommended to not use CopernicaRestAPI directly. I'm using it but
 keeping it in a separate file, for a combination of overlapping reasons:
 - Even though Copernica's API servers are quite stable and the API behavior is
   documented in https://www.copernica.com/en/documentation/restv2/rest-requests,
-  there are still unknowns. (See "error handling" above.) So, I was afraid of 
-  upsetting my live processes by moving completely away from the standard code 
+  there are still unknowns. (See "error handling" above.) So, I was afraid of
+  upsetting my live processes by moving completely away from the standard code
   until I observed more behavior in practice.
 - This way, we can more easily track if Copernica makes changes to their
   reference class, and we can merge them in here fairly easily.
@@ -169,11 +169,11 @@ The approach does have disadvantages, though:
   of this:
   - Some 'communication from the API to the client class' is done through
     exceptions. This results in the many constants to suppress exceptions
-    (which are much more in number / more illogical than needed if the code 
+    (which are much more in number / more illogical than needed if the code
     were set up differently), and the fact that the exception message must now
-    contain the full response body in order for CopernicaRestClient to access 
+    contain the full response body in order for CopernicaRestClient to access
     it.
-  - At the moment it is impossible to for CopernicaRestClient to get to the 
+  - At the moment it is impossible to for CopernicaRestClient to get to the
     headers of responses to GET/DELETE requests, because they are not inside
     exception messages. (We'd have to change the code for that, but that
     results in a behavior change.)
@@ -181,7 +181,7 @@ The approach does have disadvantages, though:
 It's likely that the next step in the evolution of this code will be to bite
 the bullet and get rid of CopernicaRestAPI / make it only a very thin layer
 (only to enable emulating API calls by tests). All this is unimportant for 'the
-99.99% case' though, which should only use CopernicaRestClient directly and 
+99.99% case' though, which should only use CopernicaRestClient directly and
 doesn't need to use the illogical constants. It could take years until the next
 rewrite as long as the current code just works, for all practical applications
 we encounter.
@@ -216,15 +216,13 @@ anymore. In case you want to know:
 
 ### Compatibility
 
-The library (very likely) works with PHP5 and PHP7. While PHP5 is way beyond
-end-of-life, this class will keep from adding PHP7-only language constructs
-until I see a real benefit on code quality (which is not the case yet), or
-until other contributors indicate a need for it.
+The library works with PHP5 and PHP7.
 
-The 'build process' (see icon at the top; a similar passed/failed message will
-appear on PRs) is only checking coding standards against PHP5.6+ / PSR12.
-CopernicaRestClient is such a thin layer that I don't consider it in need of
-unit tests.
+While PHP5 is way beyond end-of-life, I'm trying to keep it compatible as long
+as I don't see a real benefit / because  I'm still used to it / because who
+knows what old code companies are still running internally. I won't reject
+PHP7-only additions though. (Admittedly not using the ?? operator is starting
+to feel masochistic).
 
 ### Project name
 
@@ -308,10 +306,29 @@ Again, once I see a use for wrapping all data into loads of classes instead of
 working with simple array data... I'll gladly reconsider adding my code into
 the copernica-api-php project and retiring this one.
 
+### Contributing
+
+If you submit a PR and it's small - tell me explicitly if you don't want me to
+rebase it / want to keep using you own repository as-is. (If a project is slow
+moving and the PR changes are not too big, I tend to want to 'merge --rebase'
+PR's if I can't fast-forward them, to keep the git history uncomplicated for
+both me and yourself. But that does mean you're forced to change the commit
+history on your side while you upgrade to my 'merged' upstream version.)
+
+Adding tests to your changes is encouraged, but possibly not required; we'll
+see about that on a case by case basis. (Unit test coverage isn't complete
+anyway.)
+
 ## Authors
 
 * The Copernica team
 * Roderik Muit - [Wyz](https://wyz.biz/)
+
+## Acknowledgments
+
+* Partly sponsored by [Yellowgrape](http://www.yellowgrape.nl/), E-commerce
+  specialists. (Original code was commissioned by them as a closed project;
+  polishing/documenting/republishing the code was done in my own unpaid time.)
 
 ## License
 
@@ -323,9 +340,3 @@ which is also downloadable from the Copernica website).
 distributing the code together with Drupal, which is a potential issue for the
 profile import component. If that outlook changes, I might relicense a newer
 version under either GPLv3 or MIT license.)
-
-## Acknowledgments
-
-* Partly sponsored by [Yellowgrape](http://www.yellowgrape.nl/), E-commerce
-  specialists. (Original code was commissioned by them as a closed project;
-  polishing/documenting/republishing the code was done in my own unpaid time.)
