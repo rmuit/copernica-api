@@ -132,7 +132,7 @@ keeping it in a separate file, for a combination of overlapping reasons:
 ### Extra branches
 
 - 'copernica' holds the unmodified downloaded copernica_rest_api.php.
-- 'copernica-changed' holds the patches to it (except for the addition of the 
+- 'copernica-changed' holds the patches to it (except for the addition of the
   namespace, which is done in 'master'):
   - Proper handling of array parameters like 'fields'.*
   - A little extra error handling in the get() call, as far as it's necessary
@@ -142,13 +142,13 @@ keeping it in a separate file, for a combination of overlapping reasons:
 \* Actually... The first patch doesn't seem to have any additional value
 anymore. In case you want to know:
 * https://www.copernica.com/en/documentation/restv2/rest-fields-parameter
-  documents an example for the fields parameter of 
+  documents an example for the fields parameter of
   `https://api.copernica.com/v2/database/$id/profiles?fields[]=land%3D%3Dnetherlands&fields[]=age%3E16`
 * This is impossible to do with Copernica's own class: passing an array with
-  parameters results in  
+  parameters results in
   `https://api.copernica.com/v2/database/$id/profiles?fields%5B0%5D=land%3D%3Dnetherlands&fields%5B1%5D=age%3E16`
 * I could have sworn that around September 2019, querying the latter URL did
-  not result in correct data being returned, which is why I patched the code 
+  not result in correct data being returned, which is why I patched the code
   to generate the former.
 * As of the time of publishing this code, the latter URL works fine. So either
   I was doing something dumb, or Copernica has patched the API endpoint after

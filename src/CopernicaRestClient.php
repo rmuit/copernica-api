@@ -479,7 +479,7 @@ class CopernicaRestClient
             // paging and until we do, we disallow this.
             throw new RuntimeException("List of entities inside '$property_name' property starts at {}; we cannot handle anything not starting at 0.");
         }
-        if (!$throw_if_incomplete && $entity[$property_name]['count'] !== $entity[$property_name]['total']) {
+        if ($throw_if_incomplete && $entity[$property_name]['count'] !== $entity[$property_name]['total']) {
             throw new RuntimeException("Cannot return the total list of {$entity[$property_name]['totel']} entities inside '$property_name' property; only {$entity[$property_name]['count']} found.");
         }
 
@@ -541,7 +541,7 @@ class CopernicaRestClient
         $this->lastEntitiesParameters = $state['last_parameters'];
         $this->lastEntitiesDatasetTotal = $state['last_total'];
         $this->nextEntitiesDatasetStart = $state['next_start'];
-        // We don't know if the currenet class has the same token/version.
+        // We don't know if the current class has the same token/version.
         unset($this->api);
         if (isset($state['token'])) {
             $this->token = $state['token'];
