@@ -7,6 +7,16 @@
 class CopernicaRestAPI
 {
     /**
+     *  Set to True to throw exceptions on Curl errors / strange HTTP codes.
+     *
+     *  Ideally we'd always do this in the future once we establish this has
+     *  no downsides.
+     *
+     *  @var bool
+     */
+    public $throwOnError;
+
+    /**
      *  The access token
      *  @var string
      */
@@ -73,6 +83,45 @@ class CopernicaRestAPI
     }
 
     /**
+     *  Execute Curl handle, check for errors, throw exception if applicable.
+     *
+     *  @param  object    Curl resource object
+     *  @param  string    HTTP method, just for logging.
+     *  @param  string    Resource path, just for logging.
+     *  @param  array     HTTP response codes that must not cause an exception.
+     *  @return string    The HTTP response body, possibly with headers
+     *                    prepended, depending on CURLOPT_HEADER being set.
+     */
+    private function curlExec($curl, $method, $resource, $allowed_http_codes = array())
+    {
+        $answer = curl_exec($curl);
+
+        // Check for errors. We assume any non-2xx HTTP code indicates some
+        // situation that we don't just want to let pass silently. This is a
+        // departure from the original code and will require a caller to
+        // perform extra checks in certain cases, e.g. HTTP 400 being returned
+        // by a DELETE call that re-deletes an already deleted resource.
+        if ($this->throwOnError) {
+            $curl_errno = curl_errno($curl);
+            $httpCode = curl_getinfo($curl, CURLINFO_HTTP_CODE);
+            if ($curl_errno) {
+                $curl_error = curl_error($curl);
+                // We say "contents" not "body", because it may include headers.
+                throw new \RuntimeException("CURL returned code $curl_errno (\"$curl_error\") for $method $resource. Response contents: \"$answer\".", $curl_errno);
+            } elseif (($httpCode < 200 || $httpCode >= 300) && !in_array($httpCode, $allowed_http_codes)) {
+                // It's possible that we're throwing exceptions when we should
+                // not be, for e.g. some 3xx codes. But if we don't know what
+                // specific action to take in those cases, we should not just
+                // let those responses pass through (given that we don't
+                // return the HTTP code or headers to the caller).
+                throw new \RuntimeException("$method $resource returned HTTP code $httpCode. Response contents: \"$answer\".", $httpCode);
+            }
+        }
+
+        return $answer;
+    }
+
+    /**
      *  Do a GET request
      * 
      *  @param  string      Resource to fetch
@@ -89,15 +138,10 @@ class CopernicaRestAPI
         curl_setopt_array($curl, array(CURLOPT_RETURNTRANSFER => true));
 
         // do the call
-        $answer = curl_exec($curl);
+        $answer = $this->curlExec($curl, 'GET', $resource);
 
-        // Check for CURL error first (which should often provide more info
-        // than "Response did not indicate Content-Type application/json").
-        $curl_errno = curl_errno($curl);
-        if ($curl_errno) {
-            $curl_error = curl_error($curl);
-            throw new \RuntimeException("CURL returned code: $curl_errno: \"$curl_error\". Output: \"$answer\".", $curl_errno);
-        } elseif (curl_getinfo($curl, CURLINFO_CONTENT_TYPE) == 'application/json') {
+        // do we have a JSON output? we can be nice and parse it for the user
+        if (curl_getinfo($curl, CURLINFO_CONTENT_TYPE) == 'application/json') {
 
             // the JSON parsed output
             $jsonOut = json_decode($answer, true);
@@ -188,7 +232,7 @@ class CopernicaRestAPI
         curl_setopt_array($curl, $options);
 
         // execute the call
-        $answer = curl_exec($curl);
+        $answer = $this->curlExec($curl, $method, $resource);
         
         // retrieve the HTTP status code
         $httpCode = curl_getinfo($curl, CURLINFO_HTTP_CODE);
@@ -196,7 +240,8 @@ class CopernicaRestAPI
         // clean up curl resource
         curl_close($curl);
 
-        // bad request
+        // Bad request or (likely) Curl error. Note this does not apply if
+        // $this->throwOnError is true.
         if (!$httpCode || $httpCode == 400) return false;
 
         // try and get the X-Created id from the header
@@ -227,7 +272,7 @@ class CopernicaRestAPI
         ));
 
         // do the call
-        $answer = curl_exec($curl);
+        $answer = $this->curlExec($curl, 'DELETE', $resource);
 
         // clean up curl resource
         curl_close($curl);
