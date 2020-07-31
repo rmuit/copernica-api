@@ -35,10 +35,6 @@ can best be used, based on the API endpoint.
 use CopernicaApi\CopernicaRestClient;
 
 $client = new CopernicaRestClient(TOKEN);
-// When using this library to code new processes, it is recommended to throw
-// exceptions for any error encountered. (Using false or 0 instead of
-// CopernicaRestClient::NONE is fine.)
-$client->suppressApiCallErrors(CopernicaRestClient::NONE);
 
 $new_id = $client->post("database/$db_id/profiles", ['fields' => ['email' => 'rm@wyz.biz']]);
 $success = $client->put("profile/$new_id", ['email' => 'info@wyz.biz']);
@@ -82,12 +78,12 @@ $first_collection_fields = $client->getEmbeddedEntities($first_collection, 'fiel
 // collection, it is recommended to call the dedicated API endpoint instead.
 ```
 
-### Error handling
+### Error handling (is imperfect)
 
-If CopernicaRestClient methods receive an invalid response / fail to get any
-response from the API, they usually throw an exception. However, callers can
-influence this behavior and make the class method just return the invalid
-response instead. The basic things to know are:
+If CopernicaRestClient methods receive an invalid or unrecognized response /
+fail to get any response from the API, they throw an exception. Callers can
+influence this behavior and make the class method just return the response
+instead. Things to know:
 
 - The behavior can be influenced globally by setting certain types of errors
   to 'suppress' (i.e. not throw exceptions for), using
@@ -97,29 +93,34 @@ response instead. The basic things to know are:
 - Whether some responses are 'invalid', may depend on the specific application,
   like:
   - By default an exception is thrown if a single entity is queried (e.g.
-    `getEntity("profile/$id")` which has been removed in the meantime. However,
+    `getEntity("profile/$id")`) which has been removed in the meantime. However,
     the API actually returns an entity with the correct ID, all fields empty,
     and a 'removed' property with a date value. If this empty entity should be
     returned without throwing an exception: see above example code.
 
-- There is currently one case where the class is not strict, but application
-  code can benefit by setting stricter rules:
-  - calls to post() can return True (because the standard CopernicaRestApi
-    class' code seems to suggest that it is possible for the API to return
-    a 'success' response but not specify an ID). However, in many cases
-    application code probably wants to be sure that post() returns an actual
-    ID value. This can be done by
-    `suppressApiCallErrors(CopernicaRestClient::NONE)`, which will make a
-    True return value throw an exception instead. Individual calls can still
-    be made to return True with
-    `post(<url>, <data>, CopernicaRestClient::POST_RETURNS_NO_ID)`.
+- Some API endpoints behave in unknown ways. CopernicaRestClient throws
+  exceptions by default for unknown behavior; the intention is to never return
+  a value to the caller if it can't be sure how to treat that value. This may
+  however result in exceptions being thrown for 'valid' responses. Possible
+  examples:
+  - The standard CopernicaRestApi seems to suggest that not all responses to
+    POST requests contain an "X-Created" header containing the ID of a newly
+    created entity. We don't know of such cases, so until now, this situation
+    will cause an exception (so the caller is sure it gets an actual ID
+    returned by default). If you run into cases where this is not OK: pass
+    CopernicaRestClient::POST_RETURNS_NO_ID to the third argument of `post()`
+    or set it using `suppressApiCallErrors()`.
+  - https://www.copernica.com/en/documentation/restv2/rest-requests mentions
+    that some PUT requests return a HTTP 303 "See other" response. However we
+    don't know what exactly should be done in that case. (Is it necessary for
+    the class to interpret the header, in order for any return value to be
+    useful? Should CopernicaRestApi be changed for that?) So until we know, we
+    throw an exception. If you are hit by this circumstance, please see the
+    code comments at PUT_RETURNS_SEE_OTHER for possible hints.
 
-- There are loads of other constants which are only there 'just to be sure',
-  influenced by the specific structure of the standard CopernicaRestAPI code.
-  Go ahead and read the code if you want to, but it's probably best to ignore
-  them unless you get unexpected exceptions. (In that case, a report is
-  appreciated, because this code or this README might need changes.)
-
+Any time you hit an exception that you need to work around (by e.g. fiddling
+with these constants) but you think actually the class should handle this
+better: feel free to file a bug report.
 
 ## Some more details
 
@@ -141,18 +142,15 @@ I hope to soon add some utility code to aid in writing automated tests for
 processes using this class, and a component I'm using in a synchronization
 process that can insert/update profiles and related subprofiles.
 
+#### Don't use CopernicaRestAPI
+
 It is recommended to not use CopernicaRestAPI directly. I'm using it but
 keeping it in a separate file, for a combination of overlapping reasons:
 - Even though Copernica's API servers are quite stable and the API behavior is
   documented in https://www.copernica.com/en/documentation/restv2/rest-requests,
-  there are still unknowns. (Mostly in the body/headers returned by the
-  response, e.g whether POST requests could sometimes not return an ID; see
-  POST_RETURNS_NO_ID above.) So, I was afraid of upsetting my live processes by
-  moving completely away from the standard code (and writing code that was in
-  itself more consistent by throwing exceptions for every Curl error or HTTP
-  4xx/5xx response) until I observed more behavior in practice. I'd rather move
-  slowly and carefully than have the chance of a bunch of errors in my
-  processes because of making some wrong assumptions.
+  there are still unknowns. (See "error handling" above.) So, I was afraid of 
+  upsetting my live processes by moving completely away from the standard code 
+  until I observed more behavior in practice.
 - This way, we can more easily track if Copernica makes changes to their
   reference class, and we can merge them in here fairly easily.
 - Separating extra functionality interpreting the responses (e.g. getEntity() /
@@ -163,10 +161,31 @@ The approach does have disadvantages, though:
 - Introducing a bunch of 'just to be sure' constants to suppress exceptions in
   possible future unknown cases, which are strictly tied to the
   CopernicaRestAPI structure... is awkward.
-- Some error circumstances (that probably happen very infrequently), like
-  Curl errors or HTTP 4xx/5xx responses during PUT requests, are still obscured.
+- Our desire to not let any strange circumstances go unnoticed (which means we
+  throw an exception for anything possibly-strange and have those constants to
+  suppress them) has created a tight coupling between both classes.
+- The division of responsibilities between CopernicaRestAPI and
+  CopernicaRestClient is suboptimal / should ideally be rewritten. Indications
+  of this:
+  - Some 'communication from the API to the client class' is done through
+    exceptions. This results in the many constants to suppress exceptions
+    (which are much more in number / more illogical than needed if the code 
+    were set up differently), and the fact that the exception message must now
+    contain the full response body in order for CopernicaRestClient to access 
+    it.
+  - At the moment it is impossible to for CopernicaRestClient to get to the 
+    headers of responses to GET/DELETE requests, because they are not inside
+    exception messages. (We'd have to change the code for that, but that
+    results in a behavior change.)
 
-We'll see how this evolves in the future.
+It's likely that the next step in the evolution of this code will be to bite
+the bullet and get rid of CopernicaRestAPI / make it only a very thin layer
+(only to enable emulating API calls by tests). All this is unimportant for 'the
+99.99% case' though, which should only use CopernicaRestClient directly and 
+doesn't need to use the illogical constants. It could take years until the next
+rewrite as long as the current code just works, for all practical applications
+we encounter.
+
 
 ### Extra branches
 
