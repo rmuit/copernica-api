@@ -37,22 +37,38 @@ use CopernicaApi\CopernicaRestClient;
 $client = new CopernicaRestClient(TOKEN);
 
 $new_id = $client->post("database/$db_id/profiles", ['fields' => ['email' => 'rm@wyz.biz']]);
-$success = $client->put("profile/$new_id", ['email' => 'info@wyz.biz']);
+
+// put() often returns a location string for the updated entity, which often
+// isn't very useful because it's the same as the first argument - e.g. in this
+// case it always returns "profile/$new_id":
+$client->put("profile/$new_id", ['fields' => ['email' => 'info@wyz.biz']]);
+// ...but there are resources which can create new entities, e.g. the following
+// call will update all profiles matching the company name and return true, but
+// if zero profiles match then it will create a new profile and return its
+// location:
+$return = $client->put(
+  "profile/$new_id",
+  ['fields' => ['email' => 'info@wyz.biz', 'company' => 'Wyz']],
+  ['fields' => ['company==Wyz'], 'create' => true]);
+if ($return !== true) {
+    list($unimportant__always_profile, $created_id) = explode('/', $return);
+}
 
 // Get non-entity data (i.e. data that has no 'id' property).
 $stats = $client->get("publisher/emailing/$id/statistics");
 
-// Get a single entity, making sure that it still exists:
+// Get a single entity; throw an exception if it was removed earlier:
 $profile = $client->getEntity("profile/$id");
-// If for some reason you want to also have entity data returned if the entity
-// was 'removed' from Copernica: (An exception gets thrown by default.)
+// If we want to also have entity data returned (with all fields being empty
+// strings) if the entity was 'removed' from Copernica:
 $profile = $client->getEntity("profile/$id", [], CopernicaRestClient::GET_ENTITY_IS_REMOVED);
 
-// Get a list of entities; this will check the structure with its
-// start/total/count/etc properties, and return only the relevant 'data' part:
+// Get a list of entities; this will return only the relevant 'data' part from
+// the response: (If we want to have the full structure including start / count
+// / etc, we can use get()):
 $mailings = $client->getEntities('publisher/emailings');
-// If the list of mailings is longer than the limit returned by the API, get
-// the next batches like this: (example code; you may not actually want to
+// If the list of mailings is longer than the limit returned by the API, we can
+// get the next batches like this: (example code; we may not actually want to
 // fetch them all before processing one giant array...)
 while ($next_batch = $client->getEntitiesNextBatch()) {
     $mailings = array_merge($mailings, $next_batch);
@@ -74,7 +90,7 @@ $database = $client->getEntity("database/$db_id");
 $collections = $client->getEmbeddedEntities($database, 'collections');
 $first_collection = reset($collections);
 $first_collection_fields = $client->getEmbeddedEntities($first_collection, 'fields');
-// Note if you only need the collections of one database, or the fields of one
+// Note if we only need the collections of one database, or the fields of one
 // collection, it is recommended to call the dedicated API endpoint instead.
 ```
 
@@ -111,6 +127,11 @@ instead. Things to know:
     CopernicaRestClient::POST_RETURNS_NO_ID to the third argument of `post()`
     or set it using `suppressApiCallErrors()`.
 
+- If an encountered error is suppressed, the post() / put() calls will return
+  the full headers and body returned by the HTTP request (if applicable), so
+  the caller can figure out what to do with it. get() calls will return only
+  the body.
+
 Any time you hit an exception that you need to work around (by e.g. fiddling
 with these constants) but you think actually the class should handle this
 better: feel free to file a bug report.
@@ -131,9 +152,17 @@ API client class).
   improved yet without further detailed knowledge about API responses. See
   examples above.
 
-I hope to soon add some utility code to aid in writing automated tests for
-processes using this class, and a component I'm using in a synchronization
-process that can insert/update profiles and related subprofiles.
+- A 'test implementation' of the Copernica API, i.e. a class that can be used
+  instead of CopernicaRestAPI and that stores data internally. And PHPUnit
+  tests which use this test API.
+
+The 'test API' should enable writing tests for your own processes which use
+CopernicaRestClient. See CopernicaRestClient::getClient() for an example on
+how to instantiate a CopernicaRestClient which uses the test API. (Simplify at
+will; the relevant code is about how to use TestApiFactory.)
+
+The extra/ directory may contain example tests/other code I wrote for my own
+processes.
 
 #### Don't use CopernicaRestAPI
 
@@ -179,16 +208,18 @@ doesn't need to use the illogical constants. It could take years until the next
 rewrite as long as the current code just works, for all practical applications
 we encounter.
 
-
 ### Extra branches
 
 - 'copernica' holds the unmodified downloaded copernica_rest_api.php.
 - 'copernica-changed' holds the patches to it (except for the addition of the
   namespace, which is done in 'master'):
+  - An extra public property which enables throwing an exception when any
+    non-2xx HTTP response is returned. (This enables CopernicaRestClient to do
+    stricter checks... even when that means we need to do extra work to catch
+    the exception for HTTP 303s which are always returned for PUT requests. It
+    also enables us to extract and return the location header for PUT requests,
+    which is significant if they create a new entity.)
   - Proper handling of array parameters like 'fields'.*
-  - A little extra error handling in the get() call, as far as it's necessary
-    to be kept close to the Curl call. (Additional error handling is in the
-    extra wrapper class.)
 
 \* Actually... The first patch doesn't seem to have any additional value
 anymore. In case you want to know:
@@ -215,7 +246,7 @@ While PHP5 is way beyond end-of-life, I'm trying to keep it compatible as long
 as I don't see a real benefit / because  I'm still used to it / because who
 knows what old code companies are still running internally. I won't reject
 PHP7-only additions though. (Admittedly not using the ?? operator is starting
-to feel masochistic).
+to feel masochistic.)
 
 ### Project name
 
@@ -284,7 +315,8 @@ throwing exceptions for any unexpected data, for reason 2.)
 So: it would be important to me to integrate the strict checks I have made in
 the various get*() commands, into individual classes in this project. The
 advantage would likely be that the difference between my various get*() calls
-would disappear, because only one of each maps to each of the classes. However,
+would disappear, because only one of each maps to each of the API endpoints.
+However,
 * I cannot tell from reading the code, how successful that integration would be.
   (The code setup is unfortunately too opaque for me to immediately grasp this.)
 * I'm also not sure how difficult it would be to port over the
@@ -321,7 +353,8 @@ anyway.)
 
 * Partly sponsored by [Yellowgrape](http://www.yellowgrape.nl/), E-commerce
   specialists. (Original code was commissioned by them as a closed project;
-  polishing/documenting/republishing the code was done in my own unpaid time.)
+  polishing/documenting/republishing the code and implementing most of the test
+  code was done in my own unpaid time.)
 
 ## License
 

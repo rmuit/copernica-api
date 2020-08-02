@@ -33,8 +33,7 @@ use PHPUnit\Framework\TestCase;
  * because it's unlikely this will cause issues.)
  *
  * Anything that smells like it's testing 'logic / behavior of the API' should
- * likely be in the class we describe in the TODO in TestApiTest: a new test
- * class that we could run against TestApi as well as a live API/database.
+ * likely be in ApiBehaviorTest.
  */
 class CopernicaRestClientTest extends TestCase
 {
@@ -57,9 +56,11 @@ class CopernicaRestClientTest extends TestCase
         // for CopernicaRestAPI too), unlike others / for delete() it's not an
         // array. So if/then it, in whatever way.
         if ($class_method === 'put') {
-            $this->getClient($suppress)->$class_method($url, []);
+            $this->getClient($suppress, $url === 'INVALID-TOKEN')->$class_method($url, []);
         } else {
-            $this->getClient($suppress)->$class_method($url);
+            // url "INVALID-TOKEN" doesn't exist - which is no problem if we
+            // turn on the 'invalid token' hack anyway.
+            $this->getClient($suppress, $url === 'INVALID-TOKEN')->$class_method($url);
         }
     }
 
@@ -71,18 +72,19 @@ class CopernicaRestClientTest extends TestCase
     public function provideBasicExceptionsData()
     {
         // Expected values are those defined in TestApi::simulateException().
-        $create_message = function ($code, $full_message_including_method) {
+        // ($method_for_original_exception isn't necessary anymore; we
+        // changed our mind about exception messages for POST/PUT/DELETE. We're
+        // just keeping the code around in case we re-change our mind.)
+        $create_message = function ($code, $method_for_original_exception = false) {
             // If only a JSON body with an error is returned as the response
-            // contents, then the exception message actually becomes just the
-            // message inside that body. So... IF the headers are included in
-            // the response contents, that does not happen. This is enough of a
-            // distinction for us to be able to test both cases; 'returning
-            // headers' == 'not returning pure json' == 'full message'.
+            // contents, then CopernicaRestClient re-throws the exception
+            // with the message becoming just the message inside that body,
+            // prepended with "Copernica API request failed: ".
             $original_error_message = "Simulated message returned along with HTTP code $code.";
-            return $full_message_including_method
-                ? "$full_message_including_method _simulate_exception/http/$code returned HTTP code $code. Response contents: \""
-                . "HTTP/1.1 $code No descriptive string\r\nX-Fake-Header: fakevalue\r\nX-Fake-Header2: fakevalue2\r\n\r\n{\"error\":\r\n{\"message\":\"$original_error_message\"}}\"."
-                : $original_error_message;
+            return $method_for_original_exception
+                ? "$method_for_original_exception _simulate_exception/http/$code returned HTTP code $code. Response contents: \""
+                . "HTTP/1.1 $code No descriptive string\r\nX-Fake-Header: fakevalue\r\nX-Fake-Header2: fakevalue2\r\n\r\n{\"error\":\r\n{\"message\":\"" . json_encode($original_error_message) . '"}}'
+                : "Copernica API request failed: $original_error_message";
         };
 
         // All methods in CopernicaRestApi behave the same way, regarding the
@@ -97,6 +99,7 @@ class CopernicaRestClientTest extends TestCase
             // them, this test can be amended. (7 = Could not connect)
             $http_method = strtoupper($class_method);
             $data[] = [$class_method, '_simulate_exception/curl/7', 7, "CURL returned code 7 (\"Simulated error, description N/A\") for $http_method _simulate_exception/curl/7. Response contents: \""];
+
             // CopernicaRestClient also doesn't differentiate between types of
             // HTTP return code yet, but let's add a few error and non-error
             // types to preempt future changes.
@@ -104,29 +107,29 @@ class CopernicaRestClientTest extends TestCase
             // mentions 301 being possible for GET, 303 for PUT.
             foreach ([100, 301, 303, 400, 403, 404, 500, 503] as $code) {
                 if ($class_method === 'put' && $code === 303) {
-                    // This has special handling, will not throw an exception.
+                    // This has special handling; exception, will always be
+                    // intercepted by CopernicaRestClient.
                     continue;
                 }
-                // POST/PUT include headers and therefore throw exception with
-                // full message. Others get the message from the body.
-                $data[] = [$class_method, "_simulate_exception/http/$code", $code, $create_message(
-                    $code,
-                    in_array($http_method, ['POST', 'PUT']) ? $http_method : false
-                )];
+                $data[] = [$class_method, "_simulate_exception/http/$code", $code, $create_message($code)];
             }
+            // "Invalid access token" is just another 400 error for the live
+            // API, but our checkResultForError() implemented a special code;
+            // wee if that works. Also, check that this (HTTP 400) is not
+            // covered by the general "strange HTTP code" suppression.
+            // INVALID-TOKEN is not a url; it's recognized by the test method.
+            $data[] = [$class_method, 'INVALID-TOKEN', 800, 'Copernica API request failed: Invalid access token', CopernicaRestClient::POST_RETURNS_STRANGE_HTTP_CODE];
         }
-        // HTTP 400 is not covered by the general "strange HTTP code"
-        // suppression. (See above for difference in messages between post/put
-        // and delete/get. We won't construct full message for post/put here.)
-        $data[] = ['post', '_simulate_exception/http/400', 400, "POST _simulate_exception/http/400 returned HTTP code 400. Response contents: \"", CopernicaRestClient::POST_RETURNS_STRANGE_HTTP_CODE];
-        $data[] = ['put', '_simulate_exception/http/400', 400, "PUT _simulate_exception/http/400 returned HTTP code 400. Response contents: \"", CopernicaRestClient::PUT_RETURNS_STRANGE_HTTP_CODE];
-        $data[] = ['delete', '_simulate_exception/http/400', 400, 'Simulated message returned along with HTTP code 400.', CopernicaRestClient::DELETE_RETURNS_STRANGE_HTTP_CODE];
-        $data[] = ['get', '_simulate_exception/http/400', 400, 'Simulated message returned along with HTTP code 400.', CopernicaRestClient::GET_RETURNS_STRANGE_HTTP_CODE];
         // 303 for PUT usually does not throw an exception, but we emulate a
         // subset of the strange circumstances that make
         // checkResponseSeeOther() give up. Also, test that the exception is
-        // not suppressed by the regular constants. (It has its own.)
-        $data[] = ['put', '_simulate_exception/http/303-withbody', 303, "PUT _simulate_exception/http/303-withbody returned HTTP code 303. Response contents: \"", CopernicaRestClient::PUT_RETURNS_STRANGE_HTTP_CODE];
+        // not suppressed by the regular constants. (It has its own.) The
+        // difference in exception message comes from the first having a
+        // standard "error" structure in the body, which CopernicaRestClient
+        // extracts and uses for a message of a re-thrown exception. The other
+        // one with the headers + empty body is the original exception as it
+        // would be thrown from CopernicaRestAPI.
+        $data[] = ['put', '_simulate_exception/http/303-withbody', 303, 'Copernica API request failed: Simulated message returned along with HTTP code 303.', CopernicaRestClient::PUT_RETURNS_STRANGE_HTTP_CODE];
         $data[] = ['put', '_simulate_exception/http/303-nolocation', 303, "PUT _simulate_exception/http/303-nolocation returned HTTP code 303. Response contents: \"", CopernicaRestClient::PUT_RETURNS_BAD_REQUEST];
 
         // There's one other exception in CopernicaRestApi: for invalid JSON.
@@ -147,8 +150,8 @@ class CopernicaRestClientTest extends TestCase
         $data[] = ['post', '_simulate_strange_response/true', 803, "Response to POST _simulate_strange_response/true request returned no 'X-Created: ID' header. Details are unavailable."];
 
         $data[] = ['get', '_simulate_strange_response/non-array', 0, 'Response body is not a JSON encoded array: "'];
-        $data[] = ['get', '_simulate_strange_response/invalid-token', 800, 'Copernica API request failed: Invalid access token'];
-        // This one has no 'suppress' constant, so is only tested here.
+        // This one has no 'suppress' constant, so is only tested here, not in
+        // the 'NoException' test.
         $data[] = ['getEntity', '_simulate_strange_response/invalid-entity', 803, "Entity returned from _simulate_strange_response/invalid-entity resource does not contain 'id'."];
 
         return $data;
@@ -236,15 +239,15 @@ class CopernicaRestClientTest extends TestCase
                 ['put', 500, CopernicaRestClient::PUT_RETURNS_STRANGE_HTTP_CODE, $create_return_value(500, true)],
                 ['put', 503, CopernicaRestClient::PUT_RETURNS_STRANGE_HTTP_CODE, $create_return_value(503, true)],
 
-                ['delete', 100, CopernicaRestClient::DELETE_RETURNS_STRANGE_HTTP_CODE, $create_return_value(100, false)],
-                ['delete', 301, CopernicaRestClient::DELETE_RETURNS_STRANGE_HTTP_CODE, $create_return_value(301, false)],
-                ['delete', 303, CopernicaRestClient::DELETE_RETURNS_STRANGE_HTTP_CODE, $create_return_value(303, false)],
-                ['delete', 304, CopernicaRestClient::DELETE_RETURNS_STRANGE_HTTP_CODE, $create_return_value(304, false)],
-                ['delete', 400, CopernicaRestClient::DELETE_RETURNS_BAD_REQUEST, $create_return_value(400, false)],
-                ['delete', 403, CopernicaRestClient::DELETE_RETURNS_STRANGE_HTTP_CODE, $create_return_value(403, false)],
-                ['delete', 404, CopernicaRestClient::DELETE_RETURNS_STRANGE_HTTP_CODE, $create_return_value(404, false)],
-                ['delete', 500, CopernicaRestClient::DELETE_RETURNS_STRANGE_HTTP_CODE, $create_return_value(500, false)],
-                ['delete', 503, CopernicaRestClient::DELETE_RETURNS_STRANGE_HTTP_CODE, $create_return_value(503, false)],
+                ['delete', 100, CopernicaRestClient::DELETE_RETURNS_STRANGE_HTTP_CODE, $create_return_value(100, true)],
+                ['delete', 301, CopernicaRestClient::DELETE_RETURNS_STRANGE_HTTP_CODE, $create_return_value(301, true)],
+                ['delete', 303, CopernicaRestClient::DELETE_RETURNS_STRANGE_HTTP_CODE, $create_return_value(303, true)],
+                ['delete', 304, CopernicaRestClient::DELETE_RETURNS_STRANGE_HTTP_CODE, $create_return_value(304, true)],
+                ['delete', 400, CopernicaRestClient::DELETE_RETURNS_BAD_REQUEST, $create_return_value(400, true)],
+                ['delete', 403, CopernicaRestClient::DELETE_RETURNS_STRANGE_HTTP_CODE, $create_return_value(403, true)],
+                ['delete', 404, CopernicaRestClient::DELETE_RETURNS_STRANGE_HTTP_CODE, $create_return_value(404, true)],
+                ['delete', 500, CopernicaRestClient::DELETE_RETURNS_STRANGE_HTTP_CODE, $create_return_value(500, true)],
+                ['delete', 503, CopernicaRestClient::DELETE_RETURNS_STRANGE_HTTP_CODE, $create_return_value(503, true)],
 
                 ['get', 100, CopernicaRestClient::GET_RETURNS_STRANGE_HTTP_CODE, $create_return_value(100, false)],
                 ['get', 301, CopernicaRestClient::GET_RETURNS_STRANGE_HTTP_CODE, $create_return_value(301, false)],
@@ -263,8 +266,7 @@ class CopernicaRestClientTest extends TestCase
         // Regular 303 never throws exception for PUT, because it's standard
         // fare to return a 303. Non-regular 303s need suppressing.
         $run_tests('put', '_simulate_exception/http/303', CopernicaRestClient::NONE, 'someentity/1');
-        $run_tests('put', '_simulate_exception/http/303-withbody', CopernicaRestClient::PUT_RETURNS_STRANGE_SEE_OTHER,
-          "HTTP/1.1 303 No descriptive string\r\nX-Fake-Header: fakevalue\r\nLocation: https://my.domain/someentity/1\r\n\r\n{\"error\":\r\n{\"message\":\"Simulated message returned along with HTTP code 303.\"}}");
+        $run_tests('put', '_simulate_exception/http/303-withbody', CopernicaRestClient::PUT_RETURNS_STRANGE_SEE_OTHER, "HTTP/1.1 303 No descriptive string\r\nX-Fake-Header: fakevalue\r\nLocation: https://test.test/someentity/1\r\n\r\n{\"error\":\r\n{\"message\":\"Simulated message returned along with HTTP code 303.\"}}");
         $run_tests('put', '_simulate_exception/http/303-nolocation', CopernicaRestClient::PUT_RETURNS_STRANGE_SEE_OTHER, "HTTP/1.1 303 No descriptive string\r\nX-Fake-Header: fakevalue\r\n\r\n");
 
         $run_tests('get', '_simulate_exception/invalid_json', CopernicaRestClient::GET_RETURNS_INVALID_JSON, '["invalid_json}');
@@ -279,7 +281,6 @@ class CopernicaRestClientTest extends TestCase
         $run_tests('put', '_simulate_strange_response/false', CopernicaRestClient::NONE, false);
 
         $run_tests('get', '_simulate_strange_response/non-array', CopernicaRestClient::GET_RETURNS_NON_ARRAY, 'This is not a json decoded body.');
-        $run_tests('get', '_simulate_strange_response/invalid-token', CopernicaRestClient::GET_RETURNS_ERROR_MESSAGE, ['error' => ['message' => 'Invalid access token']]);
     }
 
     /**
@@ -287,21 +288,26 @@ class CopernicaRestClientTest extends TestCase
      *
      * @param int|null $suppress_exceptions_default
      *   Which exceptions to suppress by default for this client.
+     * @param bool $hack_api_for_invalid_token
+     *   (Optional) hack TestApi class to return "invalid token" errors.
      *
      * @return \CopernicaApi\CopernicaRestClient
      */
-    protected function getClient($suppress_exceptions_default = null)
+    protected function getClient($suppress_exceptions_default = null, $hack_api_for_invalid_token = false)
     {
         $token = 'testtoken';
         $api = new TestApi();
         TestApiFactory::$testApis[$token] = $api;
         $client = new CopernicaRestClient($token, '\CopernicaApi\Tests\TestApiFactory');
+
         if (isset($suppress_exceptions_default)) {
             $client->suppressApiCallErrors($suppress_exceptions_default);
         }
+        $api->invalidToken = $hack_api_for_invalid_token;
 
-        // Randomly instantiate a new client and try to restore state
-        // (factory class and suppressions) into it, to prove that works.
+        // Randomly instantiate a new client and try to restore state into it,
+        // to prove that works / the CopernicaRestClient itself doesn't hold
+        // needed state by accident.
         if (rand(0, 1)) {
             $client2 = new CopernicaRestClient('');
             $client2->restoreState($client->backupState());

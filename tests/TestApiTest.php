@@ -4,8 +4,10 @@ namespace CopernicaApi\Tests;
 
 use DateTime;
 use DateTimeZone;
+use LogicException;
 use PDO;
 use PHPUnit\Framework\TestCase;
+use RuntimeException;
 use UnexpectedValueException;
 
 /**
@@ -15,52 +17,218 @@ use UnexpectedValueException;
  * - Logic in TestApi::normalizeDatabasesStructure() and its called methods.
  * - The database backend re. profiles and subprofiles (data is written
  *   correctly by POST/PUT/DELETE, and returned correctly by GET).
- * @todo every time we add some database structure, we should add test coverage.
- *   Rule of thumb: tests that compare the outcome of API calls vs. contents in
- *   the back end (either database or structure stored in class variables)
- *   should be in this class. Tests that test the results of PUT/POST/DELETE
- *   calls vs. GET calls, often test 'API logic' rather than TestApi
- *   consistency, and should likely eventually end up in the separate class
- *   described below - not in this one (though we can implement them here as
- *   long as we don't have that test class yet).
  *
  * Of all the test classes in this directory, this is the 'base' test. It does
  * not use other classes (like CopernicaRestClient); it tests whether TestApi
  * is OK so that other test classes can assume it is, and use it.
  *
- * @todo
- *   Create a standalone test class which exercises as much logic as possible
- *   in a way can be run against both TestApi and CopernicaRestApi + real
- *   Copernica database.
- *   - This means they can't initialize a database structure through the
- *     TestAPI constructor but need to create a new database and collections
- *     and fields using API calls. (Which means TestApi first needs to support
- *     all those.)
- *   - This should exercise as much logic as possible and serve as some form of
- *     documentation on the exact behavior of Copernica, like
- *     - how exactly is the '/databases' response/output influenced by setting
- *       field defaults and other properties?
- *     - which inputs exactly are illegal for various types of calls and
- *       database fields?
- *     - what is the exact behavior re. default values for e.g. profile fields?
- *   - While it isn't meant to run often against live Copernica, we can do it
- *     once in a while and thereby prove that TestApi still behaves the same as
- *     the live API and therefore we can trust other tests written against it.
- *   - Conceptually it would be best if this didn't test CopernicaRestClient at
- *     all, just ran directly against CopernicaRestAPI / TestApi. However the
- *     code added to CopernicaRestClient is so thin and convenient, if we don't
- *     use it we might end up just reimplementing it. (Not sure yet.)
- *
- * Scratch space for tests to implement if we want to be complete:
- * - test autoincrement: delete highest numbered (sub)profile and then
- *   reinsert; check if the ID is not reused (if it isn't in Copernica). This
- *   baseline test should help ensure that other tests behave as expected.
- * - check returned message when we insert subprofiles for an unkown collection.
+ * Rule of thumb: tests that compare the outcome of API calls vs. contents in
+ * the back end (either database or structure stored in class variables) should
+ * be in this class. Tests that test the results of PUT/POST/DELETE calls vs.
+ * GET calls often belong in ApiBehaviorTest instead. (There could be some
+ * overlap in tests though they are implemented for differing reasons: tests
+ * in here make sure TestApi itself doesn't do anything strange in the code
+ * that stores/returns content, while tests in ApiBehaviorTest are written to
+ * cover every kind of reproducible behavior between TestApi vs. a live API so
+ * we want them to be as complete as possible. We may decide to only implement
+ * certain things in ApiBehaviorTest so we're not duplicating code, in which
+ * we should be clear about that in comments.)
  */
 class TestApiTest extends TestCase
 {
     /**
-     * Tests that normalization will fail if we need it to.
+     * Tests 'normalization' of input values to values we want to store.
+     *
+     * @dataProvider provideDataForNormalizeInputValue
+     *
+     * @param $destination_field_type
+     *   Type of field which the value should be written into.
+     * @param $input_value
+     *   The value.
+     * @param $expected_value
+     *   Expected value - except if the field type is 'datetime' and this is
+     *   an integer; then this is a timestamp and it's on us to transform it
+     *   into (an) expected date representation(s), using PHP's default
+     *   timezone. (Not whatever the API timezone is set to. Reason: the
+     *   timestamp is also the result of converting whatever date string, using
+     *   PHP's default timezone.)
+     */
+    public function testNormalizeInputValue($destination_field_type, $input_value, $expected_value)
+    {
+        // We don't use 'value' but it's mandatory for integers/floats.
+        $field_struct = ['type' => $destination_field_type, 'value' => '-3'];
+        $value = TestApi::normalizeInputValue($input_value, $field_struct);
+        if (is_array($expected_value)) {
+            $this->assertTrue(in_array($value, $expected_value, true));
+        } else {
+            $this->assertSame($expected_value, $value);
+        }
+    }
+
+    /**
+     * Provides data for testNormalizeInputValue() and ApiBehaviorTest code.
+     *
+     * At the same time (like many tests, but more prominently) serves as a
+     * 'specification' of how fields work on the live API. It's an incomplete
+     * specification for dates, though, we depend on outside logic to encode
+     *
+     *
+     * @return array[]
+     */
+    public function provideDataForNormalizeInputValue()
+    {
+        // 'Coincidentally' (probably not), the outcome exactly matches that of
+        // PHP's type conversion to int/string/float, as I found out after
+        // having tested all these cases and trying to recreate them in code...
+        // But hey. Now that we have these 'specs', let's just implement them
+        // as a test, for some overview.
+        $data = [
+            ['text', 'value', 'value'],
+            ['text', true, '1'],
+            ['text', false, ''],
+            ['text', 0, '0'],
+            ['text', -2, '-2'],
+            ['text', 2.99, '2.99'],
+            ['text', -2.99, '-2.99'],
+            // This one isn't literally PHP's string conversion, though...
+            ['text', ['any-kind-of-array'], ''],
+            // Email field is not checked for valid e-mail. (The UI does that,
+            // the REST API doesn't.) It's treated the same as string.
+            ['email', 'value', 'value'],
+            ['email', true, '1'],
+            ['email', false, ''],
+            ['email', 0, '0'],
+            ['email', -2, '-2'],
+            ['email', 2.99, '2.99'],
+            ['email', -2.99, '-2.99'],
+            ['email', ['any-kind-of-array'], ''],
+            ['integer', 'value', 0],
+            ['integer', 'true', 0],
+            ['integer', true, 1],
+            ['integer', false, 0],
+            ['integer', -2, -2],
+            ['integer', 2.99, 2],
+            ['integer', -2.99, -2],
+            ['integer', ['any-kind-of-array'], 1],
+            ['float', 'value', 0.0],
+            ['float', 'true', 0.0],
+            ['float', true, 1.0],
+            ['float', false, 0.0],
+            ['float', -2, -2.0],
+            ['float', 2.99, 2.99],
+            ['float', -2.99, -2.99],
+            ['float', ['any-kind-of-array'], 1.0],
+        ];
+        // Date specifications are a separate issue. First, we have inputs
+        // whose matching output we know exactly:
+        // - those that contain no dynamic parts AND whose input values don't
+        //   specify a timezone.
+        // - those that don't properly convert;
+        // We can add these to the above array as-is; we just want to do it 4
+        // times where, the empty output is "0000-00-00 00:00:00" for
+        // 'datetime' fields and "0000-00-00" for 'date' fields.
+        $dates1 = [
+            ['2020-01-02 03:04:05', '2020-01-02 03:04:05'],
+            ['2020-01-02t03:04:05', '2020-01-02 03:04:05'],
+            ['2020-01-02t03:04:05.987654', '2020-01-02 03:04:05'],
+            ['2020-01-02 03:4', '2020-01-02 03:04:00'],
+            ['2020-01-02 03:', ''],
+            ['2020-01-02 03:04 02:00', ''],
+            ['2020-01-02tz03:04', ''],
+            ['2020-2', '2020-02-01 00:00:00'],
+            ['2020 2', ''],
+            ['value', ''],
+            ['true', ''],
+            ['', ''],
+            [true, ''],
+            [false, ''],
+            // Timestamps don't work. (But they do when suffixed with '@'.)
+            [1596979546, ''],
+            [999, ''],
+            [10000, ''],
+        ];
+        // Then we have input where the output value is dynamic:
+        // - those whose input value specifies an explicit timezone. The
+        //   output is dynamic because it changes with the API timezone.
+        // - those where components of the input value are either dynamic (e.g.
+        //   "now", "yesterday"), or they are unspecified and substituted by
+        //   parts of "now".
+        // This means:
+        // - we need to calculate the expected output values, and the most
+        //   obvious way is to use input values for strtotime() for that. Given
+        //   TestApi also uses strtotime() to interpret dates, that means
+        //   - the expected output value spec is the same as the input values
+        //   - the code in the test is basically a copy of the tested code
+        //   - so it's hard to see that we really can trust this test
+        //   ...but I don't think there's a better way. And at least the below
+        //   serves as some kind of specification.
+        // - given that the conversion in TestApi happens slightly later, we'll
+        //   need to specify two values in order to never have the test fail;
+        //   the second one being 1 second later. Compare against both.
+        // Incidentally: while constructing the input/output spec it became
+        // obvious that the live API must be using strtotime() internally.
+        // Which makes the added usefulnes of these tests even more doubtful.
+        $dates2 = [
+            ['2020-01-02 03:04:05z'],
+            ['2020-01-02 03:04:05utc'],
+            ['2020-01-02 03:04:05+03:00'],
+            // In a few cases we're providing an expected output spec, but
+            // that's just for some clarification. They are completely
+            // equivalent to the input value.
+            ['@1577934245', '2020-01-02 03:04:05z'],
+            // Note the following also converts the same for 'date' types,
+            // meaning that 1959 converts to today and 1960 converts to a
+            // date in 1960!
+            [1959, '19:59'], // YYYY-MM-DD 19:59:00 (in API tiemzone)
+            [1960], // 1960-MM-DD HH:mm:ss
+            ['now'],
+            ['yesterday'],
+        ];
+
+        // Add the date conversions to the data array.
+        foreach (['date', 'datetime', 'empty_date', 'empty_datetime'] as $type) {
+            foreach ($dates1 as $input_output) {
+                if ($input_output[1] === '') {
+                    if ($type === 'date') {
+                        $input_output[1] = '0000-00-00';
+                    } elseif ($type === 'datetime') {
+                        $input_output[1] = '0000-00-00 00:00:00';
+                    }
+                } elseif (substr($type, -4) === 'date') {
+                    // Non-empty values are alway 19 chars long for $dates1.
+                    // Strip time.
+                    $input_output[1] = substr($input_output[1], 0, 10);
+                }
+                $data[] = [$type, $input_output[0], $input_output[1]];
+            }
+        }
+        foreach ($dates2 as $input_output) {
+            $expected_output = isset($input_output[1]) ? $input_output[1] : $input_output[0];
+            // Convert the output in the context of the API timezone. So far,
+            // this data provider assumes TestApi::TIMEZONE_DEFAULT because
+            // that's what the test does. The below is basically a copy of
+            // normalizeInputValue() :-/
+            $tz_obj = new DateTimeZone(TestApi::TIMEZONE_DEFAULT);
+            $date = new DateTime($expected_output, $tz_obj);
+            $date->setTimezone($tz_obj);
+
+            $date2 = new DateTime();
+            $date2->setTimezone($tz_obj);
+            $date2->setTimestamp($date->getTimestamp() + 1);
+
+
+
+            $data[] = ['date', $input_output[0], [$date->format('Y-m-d'), $date2->format('Y-m-d')]];
+            $data[] = ['empty_date', $input_output[0], [$date->format('Y-m-d'), $date2->format('Y-m-d')]];
+            $data[] = ['datetime', $input_output[0], [$date->format('Y-m-d H:i:s'), $date2->format('Y-m-d H:i:s')]];
+            $data[] = ['empty_datetime', $input_output[0], [$date->format('Y-m-d H:i:s'), $date2->format('Y-m-d H:i:s')]];
+        }
+
+        return $data;
+    }
+
+    /**
+     * Tests that normalization of the database structure will fail if needed.
      *
      * @dataProvider provideDataForNormalizationFailure
      */
@@ -98,10 +266,10 @@ class TestApiTest extends TestCase
                 ]
             ]],
             ["Name '' is not a legal name.", [
-               ['name' => '']
+                ['name' => '']
             ]],
             ["Name 'Database-name' is not a legal name.", [
-               ['name' => 'Database-name']
+                ['name' => 'Database-name']
             ]],
             // "Explicitly assigned key 0" can only occur after another numeric
             // key. (If after an alphanumeric key, it's assumed to be auto-
@@ -343,10 +511,13 @@ class TestApiTest extends TestCase
      * To repeat the class comments: this test's purpose is to guarantee
      * TestApi specific behavior, i.e. its backend treats/stores data correctly.
      *
-     * Similar tests might be implemented in the standalone test described in
-     * this class' large TODOs; their purpose would be spec/test API behavior,
-     * and we would be able to run them against the live API too. This means it
-     * doesn't test anything against the TestApi specific database backend.
+     * Most read/get() functionality and some post()/put()/delete() details are
+     * not tested in this class; as long as we establish the backend contents
+     * are OK, we can test more of their all details of GET return values in
+     * ApiBehaviorTest, which enables us to also check that logic against the
+     * live API. (Doing get() here wouldn't add that much because the test code
+     * is just the reverse of the array construction code in e.g.
+     * TestApi::getProfiles().)
      *
      * Similar tests might be implemented in CopernicaRestClientTest but their
      * purpose would only be to exercise CopernicaRestClient logic - likely to
@@ -365,13 +536,20 @@ class TestApiTest extends TestCase
                 'collections' => [
                     'Test' => [
                         'fields' => [
-                            'Score' => ['type' => 'integer'],
+                            'Score' => ['type' => 'integer', 'value' => -1],
                             'ActionTime' => ['type' => 'empty_datetime'],
                         ],
                     ]
                 ],
             ]
         ]);
+        // throwOnError doesn't make a lot of difference for get() / post()
+        // because we're testing success paths in this method, and we'll always
+        // want to do assertions on the returned values - but True may make for
+        // more specific errors if tests fail. put() is different; we use
+        // executePut() for PUT calls, which ignores the value we set here.
+        $api->throwOnError = true;
+
         $structure = $api->getDatabasesStructure();
         $database_id = $api->getMemberId('Test');
         $collection_id = $api->getMemberId('Test', $structure[$database_id]['collections']);
@@ -389,10 +567,11 @@ class TestApiTest extends TestCase
         // Account for possible race condition of the profile data being inserted
         // in the 'next' second.
         $this->assertTrue($result['_created'] === $this->getApiDate($api, $now)
-                          || $result['_created'] === $this->getApiDate($api, $now + 1));
+            || $result['_created'] === $this->getApiDate($api, $now + 1));
         $this->assertEquals($result['_created'], $result['_modified']);
+        $this->assertNull($result['_removed']);
         $profile_created = $result['_created'];
-        unset($result['_created'], $result['_modified']);
+        unset($result['_secret'], $result['_created'], $result['_modified'], $result['_removed']);
         $this->assertEquals($profile + ['_pid' => $profile_id], $result);
 
         // Inserting a second profile will result in a second row, also if the
@@ -400,15 +579,16 @@ class TestApiTest extends TestCase
         $profile2_id = $api->post("database/$database_id/profiles", ['fields' => $profile]);
         $this->assertNotEmpty($profile2_id);
         $this->assertGreaterThan($profile_id, $profile2_id);
-        // We assume that our database was emptied out.
+        // We assume that our database was empty at the start of this test.
         $result = $api->dbFetchAll("SELECT * FROM profile_$database_id ORDER BY _pid", [], '');
         $this->assertEquals(2, count($result));
         $result = end($result);
         $this->assertTrue($result['_created'] === $this->getApiDate($api, $now)
-                          || $result['_created'] === $this->getApiDate($api, $now + 1));
+            || $result['_created'] === $this->getApiDate($api, $now + 1));
         $this->assertEquals($result['_created'], $result['_modified']);
+        $this->assertNull($result['_removed']);
         $profile2_created = $result['_created'];
-        unset($result['_created'], $result['_modified']);
+        unset($result['_secret'], $result['_created'], $result['_modified'], $result['_removed']);
         $this->assertEquals($profile + ['_pid' => $profile2_id], $result);
 
         // Insert subprofile.
@@ -419,97 +599,48 @@ class TestApiTest extends TestCase
         $this->assertEquals(1, count($result));
         $result = reset($result);
         $this->assertTrue($result['_created'] === $this->getApiDate($api, $now)
-                          || $result['_created'] === $this->getApiDate($api, $now + 1));
+            || $result['_created'] === $this->getApiDate($api, $now + 1));
         $this->assertEquals($result['_created'], $result['_modified']);
+        $this->assertNull($result['_removed']);
         $subprofile_created = $result['_created'];
-        unset($result['_created'], $result['_modified']);
+        unset($result['_secret'], $result['_created'], $result['_modified'], $result['_removed']);
         $this->assertEquals($subprofile + ['_spid' => $subprofile_id, '_pid' => $profile_id], $result);
 
         // Update a field to empty. Sleep 1 to be able to check modified time.
         sleep(1);
-        $result = $api->put("profile/$profile_id/fields", ['LastName' => '']);
-        $this->assertEquals(true, $result);
+        $this->executePut($api, "profile/$profile_id/fields", ['LastName' => '']);
         // Still two profiles, i.e. nothing was magically duplicated.
         $result = $api->dbFetchAll("SELECT * FROM profile_$database_id ORDER BY _pid", [], '');
         $this->assertEquals(2, count($result));
         $result = reset($result);
         $this->assertNotEquals($profile_created, $result['_modified'], 'Profile modified time did not change.');
+        $this->assertNull($result['_removed']);
         $profile_modified = $result['_modified'];
-        unset($result['_created'], $result['_modified']);
+        unset($result['_secret'], $result['_created'], $result['_modified'], $result['_removed']);
         $this->assertEquals(['_pid' => $profile_id, 'LastName' => ''] + $profile, $result);
 
-        // We should test the exact format of accepted fields in the other
-        // (nonexistent as yet?) test class / we know SQLite does a TEXT field
-        // for dates, so there's nothing special about that here.
-        $result = $api->put("subprofile/$subprofile_id/fields", ['Score' => 0]);
-        $this->assertEquals(true, $result);
+        // We should test the exact format of accepted fields in
+        // ApiBehaviorTest / we know SQLite does a TEXT field for dates, so
+        // there's nothing special about that here.
+        $this->executePut($api, "subprofile/$subprofile_id/fields", ['Score' => 0]);
         // See there's still only one subprofile.
         $result = $api->dbFetchAll("SELECT * FROM subprofile_$collection_id", [], '');
         $result = reset($result);
         $this->assertNotEquals($profile_created, $result['_modified'], 'Profile modified time did not change.');
+        $this->assertNull($result['_removed']);
         $subprofile_modified = $result['_modified'];
-        unset($result['_created'], $result['_modified']);
+        unset($result['_secret'], $result['_created'], $result['_modified'], $result['_removed']);
         $this->assertEquals(['Score' => 0, '_spid' => $subprofile_id, '_pid' => $profile_id] + $subprofile, $result);
 
-        // Get data, see if it gets returned in the right format. (This feels a
-        // bit superfluous because it's just the reverse of the construction
-        // code in TestApi::getProfiles(). Maybe if/when the API behavior test
-        // gets made, this can be moved there, instead of copied there. On the
-        // other hand... that test might choose to use CopernicaRestClient for
-        // convenience, and then we wouldn't be testing the below 'standalone'
-        // in a/the base test class?)
-        $result = $api->get("database/$database_id/profiles");
-        // We can't compare the secret.
-        foreach ($result['data'] as $key => $value) {
-            unset($result['data'][$key]['secret']);
-        }
-        $this->assertEquals(['start' => 0, 'count' => 2, 'total' => 2, 'limit' => 100, 'data' => [
-            [
-                'ID' => (string)$profile_id,
-                'fields' => [
-                    'Email' => 'rm@wyz.biz',
-                    'LastName' => '',
-                    'Birthdate' => '1974-04-27',
-                ],
-                'interests' => [],
-                'database' => (string)$database_id,
-                'created' => $profile_created,
-                'modified' => $profile_modified,
-                'removed' => false,
-            ],
-            [
-                'ID' => (string)$profile2_id,
-                'fields' => [
-                    'Email' => 'rm@wyz.biz',
-                    'LastName' => 'Muit',
-                    'Birthdate' => '1974-04-27',
-                ],
-                'interests' => [],
-                'database' => (string)$database_id,
-                'created' => $profile2_created,
-                'modified' => $profile2_created,
-                'removed' => false,
-            ],
-        ]], $result);
 
-        $result = $api->get("collection/$collection_id/subprofiles");
-        foreach ($result['data'] as $key => $value) {
-            unset($result['data'][$key]['secret']);
-        }
-        $this->assertEquals(['start' => 0, 'count' => 1, 'total' => 1, 'limit' => 100, 'data' => [
-            [
-                'ID' => (string)$subprofile_id,
-                'fields' => ['Score' => '0', 'ActionTime' => '2020-04-27 14:15:34'],
-                'profile' => (string)$profile_id,
-                'collection' => (string)$collection_id,
-                'created' => $subprofile_created,
-                'modified' => $subprofile_modified,
-                'removed' => false,
-            ],
-        ]], $result);
+        // @TODO return value for deleted (s)p
+        // @todo check what happens when you delete nonexistent (s)p
 
-        // @todo test some get() API calls to see if TestApi formats return
-        //   values in the way we expect it. (And also after DELETE. Check it does not contain 'removed')
+        // @TODO check what happens when you re-delete a (s)p <- according to below "is fine/returns true". What answer does it give?
+        // -> The second deletion of a profile returns a 400 - but the Client doesn't see that because Api just returns true.
+
+        // @TODO IMPLEMENT: PUT of subprofile/XX works fine. Updates _modified. Still does not return anything on GET.
+        // -> also try/implement tests for subprofile/XX/fields and for profile.)
 
 
         // @TODO test how deletion of a profile with subprofiles works <- note that this smells like a logic test though, which should be moved into the other class later.
@@ -524,6 +655,41 @@ class TestApiTest extends TestCase
 
 
         // @todo note that this is a behavior test that should really be moved into the other test class.
+    }
+    // @todo more tests for profile behavior that should end up in the new test:
+    //   - deleting (sub)profile does not change 'modified' date.
+
+    /**
+     * Executes put(), catches 303.
+     *
+     * This is a standalone method because most/all code behind TestApi::put()
+     * is supposed to behave differently from get()/post(): it is supposed to
+     * throw a RuntimeException with code 303 on success if throwOnError==true.
+     *
+     * We can get away with executing most (all?) put() calls twice, so we'll
+     * do this to make sure they behave well for both throwOnError states.
+     */
+    private function executePut(TestApi $api, $resource, $data, array $parameters = array(), $execute_twice = true)
+    {
+        $old_throw_state = $api->throwOnError;
+
+        $api->throwOnError = true;
+        try {
+            $api->put($resource, $data, $parameters);
+            throw new LogicException("put($resource) should have thrown an exception and didn't.");
+        } catch (RuntimeException $exception) {
+            $code = $exception->getCode();
+            if ($code !== 303) {
+                throw $exception;
+            }
+        }
+
+        if ($execute_twice) {
+            $api->throwOnError = false;
+            $this->assertSame(true, $api->put($resource, $data, $parameters));
+        }
+
+        $api->throwOnError = $old_throw_state;
     }
 
     /**

@@ -41,10 +41,9 @@ class CopernicaRestClient
      * Value to use for method argument / suppressApiCallErrors() as a bitmask:
      *
      * Represents a HTTP GET request resulting in a HTTP 400 "Bad request"
-     * response. (This gets a separate constant to be able to suppress it,
-     * because https://www.copernica.com/en/documentation/restv2/rest-requests
-     * mentions it as one of very few HTTP response codes that could occur. The
-     * application is unknown so far, though.)
+     * response, which happens with (almost?) all errors returned from the API.
+     * If these errors are suppressed, get() returns the full response body
+     * (which is likely a JSON endoded error structure).
      */
     const GET_RETURNS_BAD_REQUEST = 2;
 
@@ -98,10 +97,10 @@ class CopernicaRestClient
      * Represents a REST API GET endpoint returning an 'expected' HTTP response
      * code and a body containing valid JSON containing an "error" entry. By
      * default, an exception will be thrown, specifying the accompanying error
-     * message. (This value does not have any effect on cases governed by
-     * GET_RETURNS_BAD_REQUEST / GET_RETURNS_STRANGE_HTTP_CODE. Ff those are
-     * suppressed, the response contents are returned; if that's JSON with an
-     * "error" entry, we never decide to throw an exception anyway.)
+     * message. While we're not sure (for lack of specs), this is expected to
+     * never happen because we expect error messages to only be returned
+     * along with a response code of 400; these are governed by
+     * GET_RETURNS_BAD_REQUEST.
      */
     const GET_RETURNS_ERROR_MESSAGE = 32;
 
@@ -123,11 +122,10 @@ class CopernicaRestClient
     /**
      * Value to use for method argument / suppressApiCallErrors() as a bitmask:
      *
-     * Represents a HTTP POST request resulting in a HTTP 400 "Bad request"
-     * response. (This gets a separate constant to be able to suppress it,
-     * because https://www.copernica.com/en/documentation/restv2/rest-requests
-     * mentions it as one of very few HTTP response codes that could occur. The
-     * application is unknown so far, though.)
+     * Represents a HTTP GET request resulting in a HTTP 400 "Bad request"
+     * response, which happens with (almost?) all errors returned from the API.
+     * If these errors are suppressed, post() returns the full response headers
+     * plus body, separated by double CR/LF.
      */
     const POST_RETURNS_BAD_REQUEST = 256;
 
@@ -177,11 +175,10 @@ class CopernicaRestClient
     /**
      * Value to use for method argument / suppressApiCallErrors() as a bitmask:
      *
-     * Represents a HTTP PUT request resulting in a HTTP 400 "Bad request"
-     * response. (This gets a separate constant to be able to suppress it,
-     * because https://www.copernica.com/en/documentation/restv2/rest-requests
-     * mentions it as one of very few HTTP response codes that could occur. The
-     * application is unknown so far, though.)
+     * Represents a HTTP GET request resulting in a HTTP 400 "Bad request"
+     * response, which happens with (almost?) all errors returned from the API.
+     * If these errors are suppressed, put() returns the full response headers
+     * plus body, separated by double CR/LF.
      */
     const PUT_RETURNS_BAD_REQUEST = 8192;
 
@@ -203,11 +200,10 @@ class CopernicaRestClient
     /**
      * Value to use for method argument / suppressApiCallErrors() as a bitmask:
      *
-     * Represents a HTTP DELETE request resulting in a HTTP 400 "Bad request"
-     * response. (This gets a separate constant to be able to suppress it,
-     * because https://www.copernica.com/en/documentation/restv2/rest-requests
-     * mentions it as one of very few HTTP response codes that could occur. The
-     * application is unknown so far, though.)
+     * Represents a HTTP GET request resulting in a HTTP 400 "Bad request"
+     * response, which happens with (almost?) all errors returned from the API.
+     * If these errors are suppressed, delete() returns the full response
+     * headers plus body, separated by double CR/LF.
      */
     const DELETE_RETURNS_BAD_REQUEST = 65536;
 
@@ -378,15 +374,16 @@ class CopernicaRestClient
      *   which knows that's safe; see method comments.
      *
      * @return mixed
-     *   ID of created entity, or simply true/false to indicate success/failure.
-     *   (This description comes from CopernicaRestAPI but it seems doubtful
-     *   that true actually indicates success for most cases though. False
-     *   would only be returned for a combination of a non-default
-     *   $suppress_errors value and an exception with an unexpected message.
+     *   ID of created entity, or simply true to indicate success (if no
+     *   "X-Created" header was returned with the response). If errors were
+     *   encountered which are suppressed: either a string containing the full
+     *   response headers and body (so it should be distinguishable from a
+     *   'normal' return value), or false if an suppressed exception has an
+     *   unrecognized message (which we hope is impossible).
      *
      * @throws \RuntimeException
-     *   If any Curl error, nonstandard HTTP response code or unexpected
-     *   response headers are encountered.
+     *   If any non-supressed Curl error, nonstandard HTTP response code or
+     *   unexpected response headers are encountered.
      *
      * @see CopernicaRestClient::suppressApiCallErrors()
      */
@@ -414,7 +411,7 @@ class CopernicaRestClient
                 || ($code == 400 && $suppress_errors & self::POST_RETURNS_BAD_REQUEST)
                 || ((($code >= 100 && $code < 200) || ($code > 299 && $code != 400))
                     && $suppress_errors & self::POST_RETURNS_STRANGE_HTTP_CODE);
-            return $this->throwOrReturn($e, !$suppress);
+            return $this->throwOrSuppress($e, $suppress);
         }
 
         // post() returns true or an ID. We think it should always be an ID...
@@ -441,15 +438,22 @@ class CopernicaRestClient
      *   suppressApiCallErrors().
      *
      * @return mixed
-     *   Very likely the location (URI relative to the versioned API) of the
-     *   entity that was just updated, but we're not sure. Could also just be
-     *   True, or... maybe... some newly created entity? False would only be
-     *   returned for a combination of a non-default $suppress_errors value and
-     *   an exception with an unexpected message.
+     *   True, or the location (URI relative to the versioned API) of the
+     *   entity that was just updated/created. (As far as known,) all
+     *   resources that are meant to update a single entity return the location
+     *   of that entity, i.e. a value equivalent to the resource URL. (As far
+     *   as known,) all resources that are meant to update multiple entities
+     *   and possibly create a new entity, return true if zero or more entities
+     *   were updated, or the location of the new entity if one was created
+     *   instead. If errors were encountered which are are suppressed, the
+     *   method can returns either a string containing the full response
+     *   headers and body (so it should be distinguishable from a 'normal'
+     *   return value)... or false if an suppressed exception has an
+     *   unrecognized message (which we hope is impossible).
      *
      * @throws \RuntimeException
-     *   If any Curl error, nonstandard HTTP response code or unexpected
-     *   response headers are encountered.
+     *   If any non-supressed Curl error, nonstandard HTTP response code or
+     *   unexpected response headers are encountered.
      *
      * @see CopernicaRestClient::suppressApiCallErrors()
      */
@@ -497,7 +501,7 @@ class CopernicaRestClient
                 || ($code == 400 && $suppress_errors & self::PUT_RETURNS_BAD_REQUEST)
                 || ((($code >= 100 && $code < 200) || ($code > 299 && !in_array($code, [303, 400])))
                     && $suppress_errors & self::PUT_RETURNS_STRANGE_HTTP_CODE);
-            return $this->throwOrReturn($e, !$suppress);
+            return $this->throwOrSuppress($e, $suppress);
         }
 
         // Unlike post(), we don't make assumptions about what kind of value
@@ -522,6 +526,10 @@ class CopernicaRestClient
      *
      * @return bool
      *   ? @todo check
+     *
+     * @throws \RuntimeException
+     *   If any non-supressed Curl error, nonstandard HTTP response code or
+     *   unexpected response headers are encountered.
      *
      * @see CopernicaRestClient::suppressApiCallErrors()
      *
@@ -549,7 +557,7 @@ class CopernicaRestClient
                 || ($code == 400 && $suppress_errors & self::DELETE_RETURNS_BAD_REQUEST)
                 || ((($code >= 100 && $code < 200) || ($code > 299 && $code != 400))
                     && $suppress_errors & self::DELETE_RETURNS_STRANGE_HTTP_CODE);
-            return $this->throwOrReturn($e, !$suppress);
+            return $this->throwOrSuppress($e, $suppress);
         }
 
         return $result;
@@ -609,7 +617,7 @@ class CopernicaRestClient
                 || ($code == 400 && $suppress_errors & self::GET_RETURNS_BAD_REQUEST)
                 || ((($code >= 100 && $code < 200) || ($code > 299 && $code != 400))
                     && $suppress_errors & self::GET_RETURNS_STRANGE_HTTP_CODE);
-            return $this->throwOrReturn($e, !$suppress);
+            return $this->throwOrSuppress($e, $suppress);
         }
 
         // Either the response had content type "application/json" and is valid
@@ -628,7 +636,12 @@ class CopernicaRestClient
                 throw new RuntimeException("Response body is not a JSON encoded array: \"$result\".");
             }
         } elseif (!($suppress_errors && self::GET_RETURNS_ERROR_MESSAGE)) {
-            $this->checkResultForError($result);
+            // It would be strange if the result contained an error structure;
+            // errors are usually sent in a HTTP 400 response, which is handled
+            // above. But we can't be sure, from the CopericaRestAPI code which
+            // does not check for HTTP 400. If this happens, an exception is
+            // thrown with (very likely) code 200.
+            $this->checkResultForError($result, 200);
         }
 
         return $result;
@@ -940,6 +953,85 @@ class CopernicaRestClient
         }
     }
 
+    /**
+     * Returns an 'api connection' instance.
+     *
+     * @return \CopernicaApi\CopernicaRestAPI|object
+     */
+    private function getApiConnection()
+    {
+        if (!isset($this->api)) {
+            if ($this->apiFactoryClassName) {
+                // We're using the factory pattern because we need to be able
+                // to instantiate the actual 'api connection' class outside of
+                // the constructor, to e.g. make restoreState() work.
+                $this->api = call_user_func([$this->apiFactoryClassName, 'create'], $this->token, $this->version);
+            } else {
+                $this->api = new CopernicaRestAPI($this->token, $this->version);
+            }
+        }
+        return $this->api;
+    }
+
+    /**
+     * Throw exception or return value contained in exception message.
+     *
+     * Just some code abstracted so we don't need to duplicate it. What we
+     * exactly return or throw still needs to be determined. This is explicitly
+     * meant to only handle specific circumstances; see the code comments.
+     *
+     * @param \RuntimeException $exception
+     *   An exception that was thrown.
+     * @param bool $suppress
+     *   If True, return something from this method (and throw away the
+     *   exception code / original message). If False, throw an exception;
+     *   either the same that was passed in, or one with a simpler message IF
+     *   the response body in the exception message were ONLY a
+     *   JSON encoded error-message structure. (If the response contents
+     *   include headers, that means the error-message structure will not bve
+     *   JSON decoded / simplified, because we assume the caller might want to
+     *   inspect the headers too. This is currently the case for all POST / PUT
+     *   requests made through CopernicaRestAPI.)
+     *
+     * @return string|false
+     *   if $suppress = True: either the response contents (the body, with
+     *   in the case of POST/PUT/DELETE, headers prepended) - or False if we
+     *   cannot find the response contents.
+     */
+    private function throwOrSuppress(RuntimeException $exception, $suppress)
+    {
+        // This should always match. Assume first-to-last double quote matches
+        // correctly.
+        $return = preg_match('/Response contents: \"(.*)\"\./s', $exception->getMessage(), $matches);
+        if ($return) {
+            // Suppress exception; return original response contents.
+            $return = $matches[1];
+        }
+        if ($suppress) {
+            // We'll want to either return the response contents that was
+            // extracted from the message, or false (because in the latter case
+            // we want to distinguish the return value from values returned by
+            // a non-error path), which means the exact exception is obscured.
+            // (In other words, we can only use this from places that never
+            // throw miscellaneous exceptions.)
+            return $return;
+        }
+
+        // The message is fairly generic. If the body itself contains a
+        // Copernica-standard JSON 'error structure', return just the
+        // message contained in it.
+        $return = explode("\r\n\r\n", $return, 2);
+        $body = isset($return[1]) ? $return[1] : $return[0];
+        $return = json_decode($body, true);
+        if (is_array($return)) {
+            // Supposedly this return value would have an "error" component. If
+            // so, re-throw the exception with, possibly, a designated code.
+            $this->checkResultForError($return, $exception->getCode());
+        }
+
+        // Ignore $return; throw the original message (including the response).
+        throw $exception;
+    }
 
     /**
      * Interprets an exception with code 303, thrown in put().
@@ -947,7 +1039,7 @@ class CopernicaRestClient
      * Separated out only to keep put() code a bit small. This logic is
      * specific to one situation.
      *
-     * @param \RuntimeException $e
+     * @param \RuntimeException $exception
      *   The exception, which is assumed to be of code 303 and contain full
      *   headers + body whose contents can/should be checked strictly.
      * @param string $resource
@@ -1003,7 +1095,7 @@ class CopernicaRestClient
             isset($headers['X-Created'])
             && substr($path, -strlen($headers['X-Created'])) != $headers['X-Created']
         ) {
-          return false;
+            return false;
         }
         return $path;
     }
@@ -1140,11 +1232,14 @@ class CopernicaRestClient
      *
      * @param array $result
      *   The JSON-decoded response body from a GET query.
+     * @param int $code
+     *   The error code that should be used for the exception if this method
+     *   does not decide it has a dedicated code for this error.
      *
      * @throws \RuntimeException
      *   If an 'error' value is found.
      */
-    private function checkResultForError(array $result)
+    private function checkResultForError(array $result, $code)
     {
         if (isset($result['error'])) {
             // Copernica seems to have a neat structure with a single-value
@@ -1170,93 +1265,13 @@ class CopernicaRestClient
                         // errors with the same code, all for distinct calls.
                         $code = 801;
                         break;
-
-                    default:
-                        $code = 0;
                 }
                 throw new RuntimeException('Copernica API request failed: ' . $result['error']['message'], $code);
             }
             // If reality differs from the above, we'll output the full array
             // as the (json encoded) message. In that case, hopefully someone
             // will find their way back here and refine this part of the code.
-            throw new RuntimeException('Copernica API request got unexpected response: ' . json_encode($result));
+            throw new RuntimeException('Copernica API request got unexpected response: ' . json_encode($result), $code);
         }
-    }
-
-    /**
-     * Throw exception or return value contained in exception message.
-     *
-     * Just some code abstracted so we don't need to duplicate it. What we
-     * exactly return or throw still needs to be determined. This is explicitly
-     * meant to only handle specific circumstances; see the code comments.
-     *
-     * @param \RuntimeException $exception
-     *   An exception that was thrown.
-     * @param bool $throw
-     *   If False, return something from this method (and throw away the
-     *   exception code / original message; we'll likely return response
-     *   contents extracted from the exception message). If True, throw an
-     *   exception; either the same that was passed in, or one with a simpler
-     *   message IF the response contents in the exception message were ONLY a
-     *   JSON encoded error-message structure. (If the response contents
-     *   include headers, that means the error-message structure will not bve
-     *   JSON decoded / simplified, because we assume the caller might want to
-     *   inspect the headers too. This is currently the case for all POST / PUT
-     *   requests made through CopernicaRestAPI.)
-     */
-    private function throwOrReturn(RuntimeException $exception, $throw)
-    {
-        // This should always match. Assume first-to-last double quote matches
-        // correctly.
-        $return = preg_match('/Response contents: \"(.*)\"\./s', $exception->getMessage(), $matches);
-        if ($return) {
-            // Suppress exception; return original response contents.
-            $return = $matches[1];
-        }
-        if (!$throw) {
-            // We'll want to either return the response contents that was
-            // extracted from the message, or false (because in the latter case
-            // we want to distinguish the return value from values returned by
-            // a non-error path), which means the exact exception is obscured.
-            // (In other words, we can only use this from places that never
-            // throw miscellaneous exceptions.)
-            return $return;
-        }
-
-        // The message is fairly generic. If the body itself contains of a
-        // Copernica-standard JSON 'error structure', return just the
-        // message contained in it.
-        $return = json_decode($return, true);
-        if (
-            $return && isset($return['error']['message'])
-            && is_string($return['error']['message'])
-            && count($return['error']) == 1 && count($return) == 1
-        ) {
-            $exception_type = get_class($exception);
-            throw new $exception_type($return['error']['message'], $exception->getCode());
-        }
-
-        // Ignore $return; throw the original message (including the response).
-        throw $exception;
-    }
-
-    /**
-     * Returns an 'api connection' instance.
-     *
-     * @return \CopernicaApi\CopernicaRestAPI|object
-     */
-    private function getApiConnection()
-    {
-        if (!isset($this->api)) {
-            if ($this->apiFactoryClassName) {
-                // We're using the factory pattern because we need to be able
-                // to instantiate the actual 'api connection' class outside of
-                // the constructor, to e.g. make restoreState() work.
-                $this->api = call_user_func([$this->apiFactoryClassName, 'create'], $this->token, $this->version);
-            } else {
-                $this->api = new CopernicaRestAPI($this->token, $this->version);
-            }
-        }
-        return $this->api;
     }
 }

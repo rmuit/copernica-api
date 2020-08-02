@@ -52,37 +52,65 @@ use UnexpectedValueException;
 class TestApi
 {
     /**
+     * See $timezone.
+     */
+    const TIMEZONE_DEFAULT = 'Europe/Amsterdam';
+
+    /**
+     * Field types that are allowed to occur in the databases structure.
+     *
+     * This is not the single authoritative value; it's for
+     * normalizeFieldStructure() to check, but there is also getSqlFieldSpec()
+     * which can't use this mapping because it needs database specific mappings
+     * (and we didn't want to define those for just SQLite).
+     *
+     * @var string[]
+     */
+    protected static $allowedFieldTypes = ['text' => 1, 'email' => 1, 'integer' => 1, 'float' => 1, 'date' => 1, 'datetime' => 1, 'empty_date' => 1, 'empty_datetime' => 1];
+
+    /**
      * Set to True to throw exceptions on Curl errors / strange HTTP codes.
      *
-     * This variable isn't expected to make any difference in behavior because
-     * most methods don't explicitly cause errors. It's here mostly to be
-     * 'compatible' with CopernicaRestAPI; callers can set it so let's make it
-     * official.
+     * This wants to emulate the behavior of CopernicaRestAPI, to facilitiate
+     * writing the 'behavior tests' which we want to be able run against both
+     * this class and the live API, to verify both against each other. In
+     * order to do that, those tests should set this property to True (just
+     * like CopernicaRestClient always does), because keeping this False on
+     * CopernicaRestAPI just isn't informative enough to guarantee behavior.
+     *
+     * This class may opt to throw LogicExceptions in certain circumstances
+     * (like needing to report an error back to the caller) if  the value is
+     * still false.
      *
      * @var bool
      */
     public $throwOnError;
 
     /**
-     * Field types that are allowed to occur in the databases structure.
+     * Set to True to cause "Invalid access token" errors.
      *
-     * This is not the single authoritative value; it's a quick reference for
-     * normalizeDatabasesStructure() to check, but other code uses database
-     * specific mappings defined elsewhere in this class.
+     * This differs from CopernicaRestAPIbecause passing it into the
+     * constructor wouldn't be compatible either. Tests which want to emulate
+     * the error can just set this property to True (there's no setter method).
      *
-     * @var string[]
+     * @var bool
      */
-    protected $allowedFieldTypes = ['text' => 1, 'email' => 1, 'integer' => 1, 'float' => 1, 'empty_date' => 1, 'empty_datetime' => 1];
+    public $invalidToken;
 
     /**
      * Timezone which the fake API backend seems to operate in.
      *
      * This influences e.g. "created" times, which are strings without timezone
-     * expression. Empty means, take PHP's default timezone setting.
+     * expression. Empty means "take PHP's default timezone setting". Some code
+     * uses a constant value instead because... 1) it turns out we can't make
+     * it dynamic in all cases; 2) we don't even know if it makes sense to make
+     * it dynamic because we don't know if the live API has a configurable
+     * timezone. If it turns out that it does, we'll have some rewriting to do
+     * of the code that uses the constant.
      *
      * @var string
      */
-    protected $timezone = 'Europe/Amsterdam';
+    protected $timezone = self::TIMEZONE_DEFAULT;
 
     /**
      * Test database connection.
@@ -117,6 +145,24 @@ class TestApi
     protected $knownValues;
 
     /**
+     * Current (or last registered) REST method (verb) we're processing.
+     *
+     * This can be useful when logging / generating errors.
+     *
+     * @var string
+     */
+    protected $currentMethod;
+
+    /**
+     * Current (or last registered) resource name we're processing.
+     *
+     * This can be useful when logging / generating errors.
+     *
+     * @var string
+     */
+    protected $currentResource;
+
+    /**
      * A log of the API calls made. For tests. Structure might change still.
      *
      * This is all POST/PUT/DELETE calls, not GET.
@@ -124,6 +170,186 @@ class TestApi
      * @var string[]
      */
     protected $apiUpdateLog = [];
+
+    /**
+     * Normalizes an input value.
+     *
+     * The Copernica API basically never returns an error for unknown field
+     * input for e.g. profiles; it just converts unknown types/values. This
+     * code grew out of testing those conversions against the live API and
+     * recreating the apparent specs. (Though in recreating it, it turns out
+     * maybe the live API code wasn't designed around specs, but was just made
+     * to do e.g. "whatever code like PHP strtotime() does" including all the
+     * strangeness. See the unit test serving as a reverse engineered spec.)
+     *
+     * Of course we don't know for sure whether the live API stores the values
+     * literally as converted here (because we only know the values it outputs)
+     * but it's likely, given some other behavior re. defaults/required fields.
+     * The only difference between how we store things (and how we are guessing
+     * the live API stores things) and the output is, we store numbers as
+     * numeric values (while they're always output as strings).
+     *
+     * This is a static method in order to be better testable (by a unit test)
+     * and also to be usable by other (functional / higher level) tests.
+     *
+     * The best specification of how Copernica behaves w.r.t. accepting /
+     * changing field input is the combination of comments in this method and
+     * the data provider for the unit test.
+     *
+     * @param mixed $value
+     *   An input value.
+     * @param array $field_struct
+     *   A field structure which at a minimum needs a valid 'type' property.
+     * @param string $timezone
+     *   (Optional) timezone in case we're formatting dates and somehow need a
+     *   nonstandard timezone. (Applicability unknown.)
+     *
+     * @return mixed
+     *   The normalized value.
+     *
+     * @see \CopernicaApi\Tests\TestApiTest::provideDataForNormalizeInputValue()
+     */
+    public static function normalizeInputValue($value, array $field_struct, $timezone = self::TIMEZONE_DEFAULT)
+    {
+        static::normalizeFieldStructure($field_struct);
+
+        switch ($field_struct['type']) {
+            // Email field is not checked for valid e-mail. (The UI does that,
+            // the REST API doesn't.) It's treated the same as string re. above
+            // conversion.
+            case 'email':
+            case 'text':
+                if (is_scalar($value)) {
+                    // Convert to string. Boolean becomes "1" / "".
+                    $value = (string) $value;
+                } else {
+                    // Other values are not ignored (because they don't
+                    // become the default value for the field on inserting);
+                    // they're explicitly "".
+                    $value = '';
+                }
+                break;
+
+            case 'integer':
+                // All non-empty arrays become 1, strings (including "true")
+                // become 0.
+                $value = (int) $value;
+                break;
+
+            case 'float':
+                // Same as integer.
+                $value = (float) $value;
+                break;
+
+            case 'date':
+            case 'datetime':
+            case 'empty_date':
+            case 'empty_datetime':
+                // It seems that Copernica is using strtotime() internally. We
+                // use DateTime objects so we can also work well if our PHP is
+                // not configured for the same timezone as Copernica is. A
+                // difference is: new DateTime(''/false) is a valid expression
+                // but strtotime('') is not.
+                if ($value !== '' && $value !== false) {
+                    // DateTime is finicky when working in the non-default
+                    // timezone: if the date/time expression does not contain a
+                    // timezone component, we must pass a timezone object into
+                    // the constructor to make it unambiguous (because we don't
+                    // want it to be interpreted in the context of PHP's
+                    // default timezone) - and this timezone also gets used for
+                    // output. But if the expression does contain a timezone
+                    // component, the timezone argument gets completely ignored
+                    // so we have to explicitly set the timezone afterwards in
+                    // order to get the right output.
+                    $tz_obj = new DateTimeZone($timezone ?: date_default_timezone_get());
+                    try {
+                        $date = new DateTime($value, $tz_obj);
+                        $date->setTimezone($tz_obj);
+                        if (substr($field_struct['type'], -4) === 'date') {
+                            $value = $date->format('Y-m-d');
+                        } else {
+                            $value = $date->format('Y-m-d H:i:s');
+                        }
+                    } catch (\Exception $e) {
+                        $value = '';
+                    }
+                }
+                if ($value === '' || $value === false) {
+                    if ($field_struct['type'] === 'date') {
+                        $value = '0000-00-00';
+                    } elseif ($field_struct['type'] === 'datetime') {
+                        $value = '0000-00-00 00:00:00';
+                    } else {
+                        $value = '';
+                    }
+                }
+        }
+
+        return $value;
+    }
+
+    /**
+     * Normalizes an input value to be able to be used as 'secret'.
+     *
+     * This is made static primarily because it fits with normalizeInputValue().
+     *
+     * @param mixed $value
+     *   An input value.
+     *
+     * @return string
+     *   A string, as it would be converted by the live API.
+     */
+    public static function normalizeSecret($value)
+    {
+        if (isset($value) && is_scalar($value)) {
+            // Convert non-ASCII to question marks. I think this approximates
+            // well enough (if not equals) what the live API is doing.
+            $value = mb_convert_encoding($value, "ASCII");
+        } else {
+            $value = '1';
+        }
+
+        return $value;
+    }
+
+    /**
+     * Checks and reformats the structure for a database/collection field.
+     *
+     * @param array $field
+     *   The field structure. Passed by reference to be easier on the caller.
+     *   Checks for array-ness and ID/name are done elsewhere and are assumed
+     *   to be done already.
+     */
+    protected static function normalizeFieldStructure(array &$field)
+    {
+        if (empty($field['type'])) {
+            throw new RuntimeException("Field has no 'type' set.");
+        }
+        if (!is_string($field['type']) || !isset(static::$allowedFieldTypes[$field['type']])) {
+            throw new RuntimeException('Unknown field type ' . json_encode($field['type']) . '.');
+        }
+
+        if (in_array($field['type'], ['integer', 'float'], true)) {
+            if (!isset($field['value'])) {
+                throw new RuntimeException("Integer/float field has no 'value' set. Copernica requires this.");
+            }
+            $is_num = $field['type'] === 'float' ? is_numeric($field['value'])
+                : filter_var($field['value'], FILTER_VALIDATE_INT);
+            if ($is_num === false) {
+                throw new RuntimeException("Integer/float field has an illegal 'value' property.");
+            }
+        } elseif (isset($field['value']) && !is_string($field['value'])) {
+            throw new RuntimeException("{$field['type']} field has a non-string 'value' property.");
+        }
+        if (isset($field['value']) && is_int($field['value'])) {
+            // We don't know why, but Copernica always returns string values
+            // also for the default values for integer/float fields. If this
+            // becomes an issue internally (e.g. with populating field values)
+            // then we should amend the output for the 'databases' API call
+            // instead.
+            $field['value'] = (string)$field['value'];
+        }
+    }
 
     /**
      * TestApi constructor.
@@ -176,49 +402,128 @@ class TestApi
      * @return mixed
      *   Usually: associative array with the result (which is the equivalent of
      *   CopernicaRestAPI JSON-decoding a response body). Other return value
-     *   could represent a non-decoded response, or just false in extreme
-     *   cases that should never happen.
+     *   should only happen if $this->throwOnError is false; those could
+     *   represent a non-decoded response, or just false in extreme cases.
+     *
+     * @throws \LogicException
+     *   If this class does not know how to handle input.
+     * @throws \RuntimeException
+     *   If 'API failure' was encounterd and $this->throwOnError is true.
      */
     public function get($resource, array $parameters = array())
     {
         // No update log; we don't care that much (yet) how often we call GET.
-        $parts = explode('/', $resource);
+        $parts = $this->initRestCall('GET', $resource, false);
+        if (isset($parts['error'])) {
+            return $parts;
+        }
+        // Fairly horrible way of passing extra info back depending on 'base':
+        if (in_array($parts[0], ['profile', 'subprofile'], true)) {
+            // This is the database or collection ID, to save a db query later.
+            $context_id = array_pop($parts);
+        }
 
         // _simulate_exception has variable 2nd/3rd component.
         if ($parts[0] === '_simulate_exception') {
-            $this->checkUrlPartCount($resource, 2, 3);
+            $return = $this->checkUrlPartCount($parts, 2, 3);
+            if ($return !== true) {
+                return $return;
+            }
             $this->simulateException($parts[1], isset($parts[2]) ? $parts[2] : '', 'GET');
         }
         // The majority of paths have a variable second component. So select
         // the first+third (until we need anything else).
         switch ($parts[0] . (isset($parts[2]) ? '/' . $parts[2] : '')) {
             case '_simulate_strange_response':
-                $this->checkUrlPartCount($resource, 2, 2);
+                $return = $this->checkUrlPartCount($parts, 2, 2);
+                if ($return !== true) {
+                    return $return;
+                }
                 switch ($parts[1]) {
                     case 'non-array':
                         return 'This is not a json decoded body.';
 
-                    case 'invalid-token':
-                        return ['error' => ['message' => 'Invalid access token']];
-
                     case 'invalid-entity':
                         return ['name' => 'incomplete-entity'];
                 }
-                // Fall through to "not implemented".
+                // Fall through to "not implemented" <-better: "invalid method".
                 break;
 
-            case 'database/profiles':
-                return $this->getProfiles($parts[1], $parameters);
-
             case 'collection/subprofiles':
+                // Superfluous path components are ignored.
                 return $this->getSubprofiles($parts[1], $parameters);
 
-            case 'profile':
-                $this->throwIfNotEmpty($parameters);
-                return $this->getProfile($parts[1]);
+            case 'database/profiles':
+                // Superfluous path components are ignored.
+                return $this->getProfiles($parts[1], $parameters);
+                // @todo implement profileids?
+
+            case 'profile/subprofiles':
+                // @todo check if we should return error for too many parts. Probably not -> 4, 0
+                $return = $this->checkUrlPartCount($parts, 4, 4);
+                if ($return !== true) {
+                    return $return;
+                }
+                throw new LogicException("TestApi does not implement GET $resource yet.");
         }
 
-        throw new RuntimeException("Resource $resource (GET) not implemented.");
+        // We think we can get away with this so we don't have to do it in all
+        // individual cases below:
+        $this->throwIfNotEmpty($parameters);
+
+        // Select routes based on only the first part, regardless of the third
+        // part's value, except if that was matched above & didn't fall through.
+        switch ($parts[0]) {
+            case 'collection':
+                // This can be trimmed as these subpaths are implemented above
+                // (or as colection/ID is implemented).
+                if (!isset($parts[2]) || in_array($parts[2], ['fields', 'miniviews', 'subprofileids', 'subprofiles', 'unsubscribe'], true)) {
+                    throw new LogicException("TestApi does not implement GET $resource yet.");
+                }
+                break;
+
+            case 'database':
+                // This can be trimmed as these subpaths are implemented above
+                // (or as database/ID is implemented).
+                if (!isset($parts[2]) || in_array($parts[2], ['collections', 'fields', 'interests', 'profileids', 'unsubscribe', 'views'], true)) {
+                    throw new LogicException("TestApi does not implement GET $resource yet.");
+                }
+                break;
+
+            case 'profile':
+                // This can be trimmed as these subpaths are implemented above.
+                if (isset($parts[2]) && in_array($parts[2], ['interests', 'subprofiles', 'ms', 'publisher', 'files'], true)) {
+                    throw new LogicException("TestApi does not implement GET $resource yet.");
+                }
+                if (!isset($parts[2]) || $parts[2] === 'fields') {
+                    return $this->getProfile($parts[1], $context_id, isset($parts[2]));
+                }
+                // Unknown paths for valid profile -> "Invalid method"
+                break;
+
+            case 'subprofile':
+                if (isset($parts[2]) && in_array($parts[2], ['ms', 'publisher'], true)) {
+                    throw new LogicException("TestApi does not implement GET $resource yet.");
+                }
+                if (!isset($parts[2]) || $parts[2] === 'fields') {
+                    return $this->getSubprofile($parts[1], $context_id, isset($parts[2]));
+                }
+                // Unknown paths for valid subprofile -> "Invalid method"
+                break;
+
+            // Throw "not implemented" for known parts which were not rejected
+            // by initRestCall() yet, because that's preferred to our default
+            // of "invalid method" (which is used as a fall-through for some
+            // more-specific versions of paths processed above, and tested by
+            // ApiBehaviorTest).
+            case 'databases':
+            case 'email':
+            case 'ms':
+            case 'publisher':
+                throw new LogicException("TestApi does not implement GET $resource yet.");
+        }
+
+        return $this->returnError('Invalid method');
     }
 
     /**
@@ -231,67 +536,174 @@ class TestApi
      *
      * @return mixed
      *   ID of created entity, or simply true/false to indicate success/failure.
-     *   (This description comes from CopernicaRestAPI but it seems doubtful
-     *   that true actually indicates success for most cases though. False is
-     *   only returned for nonstandard $suppress_errors values.)
+     *   (The only cases we know of true being returned so far, are calls for a
+     *   'no-op' path which might also have returned an error.) False is only
+     *   returned if $this->throwOnError is false.
+     *
+     * @throws \LogicException
+     *   If this class does not know how to handle input.
+     * @throws \RuntimeException
+     *   If 'API failure' was encountered and $this->throwOnError is true.
      */
     public function post($resource, array $data = array())
     {
-        $this->apiUpdateLog [] = "POST $resource";
-        $parts = explode('/', $resource);
+        $parts = $this->initRestCall('POST', $resource);
+        if ($parts === false) {
+            return $parts;
+        }
+        // Fairly horrible way of passing extra info back depending on 'base':
+        if (in_array($parts[0], ['profile', 'subprofile'], true)) {
+            // This is the database or collection ID, to save a db query later.
+            $context_id = array_pop($parts);
+        }
 
         // _simulate_exception has variable 2nd/3rd component.
         if ($parts[0] === '_simulate_exception') {
-            $this->checkUrlPartCount($resource, 3, 3);
+            $return = $this->checkUrlPartCount($parts, 3, 3);
+            if ($return !== true) {
+                return $return;
+            }
             $this->simulateException($parts[1], $parts[2], 'POST');
         }
         // The majority of paths have a variable second component. So select
         // the first+third (until we need anything else).
         switch ($parts[0] . (isset($parts[2]) ? '/' . $parts[2] : '')) {
             case '_simulate_strange_response':
-                $this->checkUrlPartCount($resource, 2, 2);
+                $return = $this->checkUrlPartCount($parts, 2, 2);
+                if ($return !== true) {
+                    return $return;
+                }
                 // Both false and true are considered 'strange responses'. If
                 // we discover a POST request that actually returns no ID, then
-                // we can likely take out the 'true' part here.
+                // we can likely take out the 'true' part here. (<-We have one,
+                // see below, but it requires an existing database.)
                 if (in_array($parts[1], ['false', 'true'], true)) {
                     return $parts[1] === 'true';
                 }
-                // Fall through to "not implemented".
+                // Fall through to "invalid method".
                 break;
 
             case 'database/profiles':
-                $this->checkUrlPartCount($resource, 3, 3);
-                $id = $this->postProfile($parts[1], $data);
-                // This can only return the inserted ID.
-                if (is_numeric($id)) {
-                    // CopernicaRestAPI picks it out from the header and
-                    // returns a string.
-                    return (string)$id;
+                $return = $this->checkUrlPartCount($parts, 3);
+                if ($return !== true) {
+                    return $return;
                 }
-                // Figure out later whether we just want to have the test
-                // throw an exception, or return true for CopernicaRestAPI
-                // compatibility.
-                // @todo check current state
-                // @todo does this tie in with the new throwOnError property?
-                throw new RuntimeException('postProfile() returned non-numeric value ' . var_export($id, true) . '.');
+                $id = $this->postProfile($parts[1], $data);
+                if (is_numeric($id) || $id === false) {
+                    // CopernicaRestAPI picks the ID out from the header and
+                    // returns a string.
+                    return $id === false ? $id : (string)$id;
+                }
+                throw new LogicException('postProfile() returned non-numeric value ' . var_export($id, true) . '.');
 
             case 'profile/subprofiles':
-                $this->checkUrlPartCount($resource, 4, 4);
-                $id = $this->postSubprofile($parts[1], $parts[3], $data);
-                // This can only return the inserted ID.
-                if (is_numeric($id)) {
-                    // CopernicaRestAPI picks it out from the header and
-                    // returns a string.
-                    return (string)$id;
+                // 4, not 3, because collection ID is required.
+                $return = $this->checkUrlPartCount($parts, 4);
+                if ($return !== true) {
+                    return $return;
                 }
-                // Figure out later whether we just want to have the test
-                // throw an exception, or return true for CopernicaRestAPI
-                // compatibility.
-                // @todo check current state
-                throw new RuntimeException('postSubprofile() returned non-numeric value ' . var_export($id, true) . '.');
+                $id = $this->postSubprofile($parts[1], $parts[3], $data);
+                if (is_numeric($id) || $id === false) {
+                    // CopernicaRestAPI picks the ID out from the header and
+                    // returns a string.
+                    return $id === false ? $id : (string)$id;
+                }
+                throw new LogicException('postSubprofile() returned non-numeric value ' . var_export($id, true) . '.');
         }
 
-        throw new RuntimeException("Resource $resource (POST) not implemented.");
+        // Select routes based on only the first part, regardless of the third
+        // part's value, except if that was matched above & didn't fall through.
+        switch ($parts[0]) {
+            case 'collection':
+                // This can be trimmed as these subpaths are implemented above.
+                if (isset($parts[2]) && in_array($parts[2], ['fields', 'miniviews'], true)) {
+                    throw new LogicException("TestApi does not implement POST $resource yet.");
+                }
+                // The below are all valid for PUT. Supposedly they don't do
+                // anything for POST but they don't return the standard
+                // "invalid path" error. If we want to be super compatible / be
+                // able to test/spec this in ApiBehaviorTest, we'll need to
+                // implement these - but we'll need to check for each, if they
+                // really don't have any effects.
+                // - field: returns "No field id supplied for the field"
+                // - field/X: "Failed to get the field", or returns true.
+                // - intentions & unsubscribe: returns true <-we don't trust it.
+                if (isset($parts[2]) && in_array($parts[2], ['field', 'intentions', 'unsubscribe'], true)) {
+                    throw new LogicException("TestApi does not implement POST $resource with non-empty data yet. (Supposedly this path isn't supported, but other supposedly-unsupported POST resources exist, which do have effect. Maybe this does the same as PUT?)");
+                }
+                if (!isset($parts[2])) {
+                    // collection/VALID-ID returns true from CopernicaRestAPI
+                    // (so it must return a 2xx without X-Created header),
+                    // despite it not being officially supported/documented.
+                    if ($data) {
+                        // @todo test if non-empty data does anything; some
+                        // undocumented POST endpoints that return true, do.
+                        throw new LogicException("TestApi does not implement POST $resource with non-empty data yet. (Supposedly this path isn't supported, but other supposedly-unsupported POST resources exist, which do have effect. Maybe this does the same as PUT?)");
+                    }
+                    return true;
+                }
+                // Unknown paths for valid collection -> "Invalid method"
+                break;
+
+            case 'database':
+                // See 'collection' for comments.
+                if (isset($parts[2]) && in_array($parts[2], ['copy', 'fields', 'views'], true)) {
+                    throw new LogicException("TestApi does not implement POST $resource yet.");
+                }
+                // These happen to be the same paths as 'collection'.
+                if (isset($parts[2]) && in_array($parts[2], ['field', 'intentions', 'unsubscribe'], true)) {
+                    throw new LogicException("TestApi does not implement POST $resource with non-empty data yet. (Supposedly this path isn't supported, but other supposedly-unsupported POST resources exist, which do have effect. Maybe this does the same as PUT?)");
+                }
+                if (!isset($parts[2])) {
+                    if ($data) {
+                        // @todo test if non-empty data does anything; some
+                        // undocumented POST endpoints that return true, do.
+                        throw new LogicException("TestApi does not implement POST $resource with non-empty data yet. (Supposedly this path isn't supported, but other supposedly-unsupported POST resources exist, which do have effect. Maybe this does the same as PUT?)");
+                    }
+                    return true;
+                }
+                break;
+
+            case 'profile':
+                // See 'collection' for comments.
+                if (isset($parts[2]) && in_array($parts[2], ['datarequest', 'interests'], true)) {
+                    throw new LogicException("TestApi does not implement POST $resource yet.");
+                }
+                if (!isset($parts[2])) {
+                    // POST profile/VALID-ID does the same as PUT, returns true.
+                    // @TODO make explicit test for this path
+                    return $this->put($resource, $data);
+                }
+                break;
+
+            case 'subprofile':
+                // See 'collection' for comments.
+                if (isset($parts[2]) && $parts[2] === 'datarequest') {
+                    throw new LogicException("TestApi does not implement POST $resource yet.");
+                }
+                if (isset($parts[2]) && $parts[2] === 'fields') {
+                    throw new LogicException("TestApi does not implement POST $resource with non-empty data yet. (Supposedly this path isn't supported, but other supposedly-unsupported POST resources exist, which do have effect. Maybe this does the same as PUT?)");
+                }
+                if (!isset($parts[2])) {
+                    // POST profile/VALID-ID does the same as PUT, returns true.
+                    // @TODO make explicit test for this path
+                    return $this->put($resource, $data);
+                }
+                break;
+
+            // Throw "not implemented" for known parts which were not rejected
+            // by initRestCall() yet, because that's preferred to our default
+            // of "invalid method" (which is used as a fall-through for some
+            // more-specific versions of paths processed above, and tested by
+            // ApiBehaviorTest).
+            case 'databases':
+            case 'email':
+            case 'ms':
+            case 'publisher':
+                throw new LogicException("TestApi does not implement POST $resource yet.");
+        }
+
+        return $this->returnError('Invalid method');
     }
 
     /**
@@ -309,44 +721,151 @@ class TestApi
      * @return mixed
      *   ID of created entity, or simply true/false to indicate success/failure.
      *   (This description comes from CopernicaRestAPI but we're not sure of
-     *   any PUT call returning an ID yet. False is only returned for
-     *   nonstandard $suppress_errors values.)
+     *   any PUT call returning an ID yet. False is only returned if
+     *   $this->throwOnError is false.)
+     *
+     * @throws \LogicException
+     *   If this class does not know how to handle input.
+     * @throws \RuntimeException
+     *   If 'API failure' was encounterd and $this->throwOnError is true.
      */
     public function put($resource, $data, array $parameters = array())
     {
-        $this->apiUpdateLog [] = "PUT $resource";
-        $parts = explode('/', $resource);
+        $parts = $this->initRestCall('PUT', $resource);
+        if ($parts === false) {
+            return $parts;
+        }
+        // Fairly horrible way of passing extra info back depending on 'base':
+        if (in_array($parts[0], ['profile', 'subprofile'], true)) {
+            // This is the database or collection ID, to save a db query later.
+            $context_id = array_pop($parts);
+        }
+
         $this->throwIfNotEmpty($parameters);
 
         // _simulate_exception has variable 2nd/3rd component.
         if ($parts[0] === '_simulate_exception') {
-            $this->checkUrlPartCount($resource, 3, 3);
+            $return = $this->checkUrlPartCount($parts, 3, 3);
+            if ($return !== true) {
+                return $return;
+            }
             $this->simulateException($parts[1], $parts[2], 'PUT');
         }
         // The majority of paths have a variable second component. So select
         // the first+third (until we need anything else).
         switch ($parts[0] . (isset($parts[2]) ? '/' . $parts[2] : '')) {
             case '_simulate_strange_response':
-                $this->checkUrlPartCount($resource, 2, 2);
+                $return = $this->checkUrlPartCount($parts, 2, 2);
+                if ($return !== true) {
+                    return $return;
+                }
                 // false is a 'strange response'; neither true or another value
                 // (ID value only, but we don't check that) are 'strange'.
                 if ($parts[1] === 'false') {
                     return false;
                 }
-                // Fall through to "not implemented".
+                // Fall through to "invalid method".
                 break;
 
-            case 'profile/fields':
-                $this->checkUrlPartCount($resource, 3, 3);
-                $this->putProfileFields($parts[1], $data);
-                return true;
+            case 'database/profiles':
+                // The use of this call is explicitly different from the POST
+                // call, unlike many other cases. (Updating multiple profiles.)
+                // 'fields' parameter (for selection) behaves same as GET;
+                // 'fields' part of data (for updating) behaves same as POST.
+                // Superfluous path components are ignored.
+                return $this->putProfiles($parts[1], $data, $parameters);
 
-            case 'subprofile/fields':
-                $this->checkUrlPartCount($resource, 3, 3);
-                $this->putSubprofileFields($parts[1], $data);
-                return true;
+            case 'profile/subprofiles':
+                // @todo say
+                //  - explicit different application from POST, unlike many other resources
+                //  - this is mis-documented at https://www.copernica.com/en/documentation/restv2/rest-put-profile-subprofiles
+                //  - whatever else we say with database/profiles
+                //  - difference from profiles is the body data because that has no 'fields' subsection?
+                //    ^ Not tried. @todo Test.
+                //  - 'fields' query param (not body arg) behaves DIFFERENT from database//profiles:
+                //     illegal param leads to error here.
+                //     (This means we should test more, and explicitly test other tings as well I think)
+                // @todo check if we should return error for too many parts. Probably not -> 4, 0
+                //  ^ actually, probably remove because 4th parameter not required? See database/profiles
+                $return = $this->checkUrlPartCount($parts, 4, 4);
+                if ($return !== true) {
+                    return $return;
+                }
+                throw new LogicException("TestApi does not implement PUT $resource yet.");
         }
-        throw new RuntimeException("Resource $resource (PUT) not implemented.");
+
+        // Select routes based on only the first part, regardless of the third
+        // part's value, except if that was matched above & didn't fall through.
+        switch ($parts[0]) {
+            case 'collection':
+                // This can be trimmed as these subpaths are implemented above.
+                if (isset($parts[2]) && in_array($parts[2], ['field', 'intentions', 'unsubscribe'], true)) {
+                    throw new LogicException("TestApi does not implement PUT $resource yet.");
+                }
+                if (isset($parts[2]) && in_array($parts[2], ['fields', 'miniviews'], true)) {
+                    throw new LogicException("TestApi does not implement PUT $resource yet / this is officially only a POST resource but we're not sure yet if it isn't supported by PUT anyway..");
+                }
+                if (!isset($parts[2])) {
+                    // We can likely say PUTting an empty array is supported
+                    // (returns true) like we did at post(). Not tested yet.
+                    throw new LogicException("TestApi does not implement PUT $resource yet.");
+                }
+                break;
+
+            case 'database':
+                // This can be trimmed as these subpaths are implemented above.
+                if (isset($parts[2]) && in_array($parts[2], ['field', 'intentions', 'unsubscribe'], true)) {
+                    throw new LogicException("TestApi does not implement PUT $resource yet.");
+                }
+                if (isset($parts[2]) && in_array($parts[2], ['copy', 'fields', 'views'], true)) {
+                    throw new LogicException("TestApi does not implement PUT $resource yet / this is officially only a POST resource but we're not sure yet if it isn't supported by PUT anyway..");
+                }
+                if (!isset($parts[2])) {
+                    // We can likely say PUTting an empty array is supported
+                    // (returns true) like we did at post(). Not tested yet.
+                    throw new LogicException("TestApi does not implement PUT $resource yet.");
+                }
+                break;
+
+            case 'profile':
+                // This can be trimmed as these subpaths are implemented above.
+                if (isset($parts[2]) && $parts[2] === 'interests') {
+                    throw new LogicException("TestApi does not implement PUT $resource yet.");
+                }
+                if (isset($parts[2]) && $parts[2] === 'datarequest') {
+                    throw new LogicException("TestApi does not implement PUT $resource yet / this is officially only a POST resource but we're not sure yet if it isn't supported by PUT anyway..");
+                }
+                if (!isset($parts[2]) || $parts[2] === 'fields') {
+                    // Superfluous path components are ignored.
+                    return $this->putProfile($parts[1], $context_id, $data, isset($parts[2]));
+                }
+                // @todo implement/test POST equivalent too.
+                break;
+
+            case 'subprofile':
+                if (isset($parts[2]) && $parts[2] === 'datarequest') {
+                    throw new LogicException("TestApi does not implement PUT $resource yet / this is officially only a POST resource but we're not sure yet if it isn't supported by PUT anyway..");
+                }
+                if (!isset($parts[2]) || $parts[2] === 'fields') {
+                    // Superfluous path components are ignored.
+                    return $this->putSubprofile($parts[1], $context_id, $data, isset($parts[2]));
+                }
+                // @todo implement/test POST equivalent too.
+                break;
+
+            // Throw "not implemented" for known parts which were not rejected
+            // by initRestCall() yet, because that's preferred to our default
+            // of "invalid method" (which is used as a fall-through for some
+            // more-specific versions of paths processed above, and tested by
+            // ApiBehaviorTest).
+            case 'databases':
+            case 'email':
+            case 'ms':
+            case 'publisher':
+                throw new LogicException("TestApi does not implement PUT $resource yet.");
+        }
+
+        return $this->returnError('Invalid method');
     }
 
     /**
@@ -366,6 +885,12 @@ class TestApi
      *
      * @return mixed
      *   ID of created entity, or simply true/false to indicate success/failure.
+     *   Failure only if $this->throwOnError is false.
+     *
+     * @throws \LogicException
+     *   If this class does not know how to handle input.
+     * @throws \RuntimeException
+     *   If 'API failure' was encounterd and $this->throwOnError is true.
      */
     public function sendData($resource, array $data = array(), array $parameters = array(), $method = "POST")
     {
@@ -390,12 +915,22 @@ class TestApi
      */
     public function delete($resource)
     {
-        $this->apiUpdateLog [] = "DELETE $resource";
-        $parts = explode('/', $resource);
+        $parts = $this->initRestCall('DELETE', $resource);
+        if ($parts === false) {
+            return $parts;
+        }
+        // Fairly horrible way of passing extra info back depending on 'base':
+        if (in_array($parts[0], ['profile', 'subprofile'], true)) {
+            // This is the database or collection ID, to save a db query later.
+            $context_id = array_pop($parts);
+        }
 
         // _simulate_exception has variable 2nd/3rd component.
         if ($parts[0] === '_simulate_exception') {
-            $this->checkUrlPartCount($resource, 3, 3);
+            $return = $this->checkUrlPartCount($parts, 3, 3);
+            if ($return !== true) {
+                return $return;
+            }
             $this->simulateException($parts[1], $parts[2], 'DELETE');
         }
 
@@ -534,43 +1069,180 @@ class TestApi
         return 0;
     }
 
+    /**
+     * Does some initialization shared between GET/POST/PUT/DELETE calls.
+     *
+     * @param string $method
+     * @param string $resource
+     * @param bool $addLog
+     *
+     * @return false|array
+     *   Array with 'error' key for errors on GET; false for errors on other
+     *   methods; numerically keyed array with URL parts by default. If the
+     *   path is / starts with an 'entity/ID' format, the ID was validated...
+     *   and depending on the 'entity type', an extra part may have been pushed
+     *   onto the array. (Which is a fairly horrible way of communicating
+     *   extra info back to the caller, which now every caller must be aware
+     *   of.)
+     */
+    protected function initRestCall($method, $resource, $addLog = true)
+    {
+        $this->currentResource = $resource;
+        $this->currentMethod = $method;
+        if ($addLog) {
+            $this->apiUpdateLog [] = "$method $resource";
+        }
+        if ($this->invalidToken) {
+            return $this->returnError('Invalid access token');
+        }
+
+        // Take any empty parts off end because (as far as we've seen) the API
+        // always ignores them.
+        $parts = explode('/', $resource);
+        while ($parts && end($parts) === '') {
+            array_pop($parts);
+        }
+        if (!$parts) {
+            return $this->returnError('Invalid method');
+        }
+
+        // Validate "entity/id" paths. (And (mini)condition/type/id.) This
+        // validation is the same for all methods (unless a method totally
+        // does not implement the base path, in which case we're issuing
+        // "invalid method"):
+        // - if the second part (id) is missing, we issue a generic path error;
+        // - if the id is either invalid or not found, we issue a per-entity
+        //   error. (If a sub-path in the 3rd-xth part is invalid/unknow, that
+        //   doesn't matter; the API still issues the 'invalid ID' error.)
+        if (
+            in_array($parts[0], [
+                'collection',
+                'condition',
+                'database',
+                'minicondition',
+                'miniview',
+                'minirule',
+                'profile',
+                'rule',
+                'subprofile',
+                'view',
+            ])
+        ) {
+            $return = $this->checkUrlPartCount($parts, 2);
+            if ($return !== true) {
+                return $return;
+            }
+            switch ($parts[0]) {
+                case 'collection':
+                    if (
+                        filter_var($parts[1], FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]) === false
+                        || !isset($this->knownValues['collection'][$parts[1]])
+                    ) {
+                        return $this->returnError('No collection with given ID');
+                    }
+                    break;
+
+                case 'database':
+                    if (
+                        filter_var($parts[1], FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]) === false
+                        || !isset($this->knownValues['database'][$parts[1]])
+                    ) {
+                        return $this->returnError('No database with supplied ID');
+                    }
+                    break;
+
+                case 'minicondition':
+                    // We have not looked at this beyond seeing that GET is not
+                    // implemented, and POST seems to be. So let's tweak the
+                    // errors to that.
+                    if ($method !== 'GET') {
+                        throw new LogicException("TestApi does not implement $method $resource yet.");
+                    }
+                    return $this->returnError('Invalid method');
+
+                case 'profile':
+                    if (filter_var($parts[1], FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]) === false) {
+                        // Note "entity", not "profile". (For all calls.)
+                        return $this->returnError('No entity with supplied ID');
+                    }
+                    $id = $this->dbFetchField('SELECT database_id FROM profile_db where profile_id = :id', [':id' => $parts[1]]);
+                    if ($id) {
+                        array_push($parts, $id);
+                    } else {
+                        // Note "entity", not "profile". (For all calls.)
+                        return $this->returnError('No entity with supplied ID');
+                    }
+                    break;
+
+                case 'subprofile':
+                    if (filter_var($parts[1], FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]) === false) {
+                        return $this->returnError('No subprofile with supplied ID');
+                    }
+                    $id = $this->dbFetchField('SELECT collection_id FROM subprofile_coll where subprofile_id = :id', [':id' => $parts[1]]);
+                    if ($id) {
+                        array_push($parts, $id);
+                    } else {
+                        return $this->returnError('No subprofile with supplied ID');
+                    }
+                    break;
+
+                default:
+                    throw new LogicException("TestApi does not implement $method $resource yet.");
+            }
+        }
+
+        return $parts;
+    }
+
+    /**
+     * Throws an exception if the parameter is not empty.
+     *
+     * @param $parameters
+     *   The parameter.
+     */
     protected function throwIfNotEmpty($parameters)
     {
         if ($parameters) {
-            throw new RuntimeException('TestAPI does not support parameters sent with this request (until there is clarity on how to support them).');
+            throw new LogicException('TestAPI does not support parameters sent with this request (until there is clarity on how to support them).');
         }
     }
 
     /**
      * Checks number of parts in a URL.
      *
-     * @param string $resource
-     *   URL.
+     * @param array $parts
+     *   Parts of the resource/URL, already stripped from 'trailing' empty ones.
      * @param int $min_parts
      *   The minimum number of parts that must be present, in other words, the
      *   minimum number of slashes that a URL must have plus 1.
      * @param int $max_parts
-     *   The maximum number of parts that can be present.
+     *   (Optional) maximum number of parts that can be present.
+     *
+     * @return mixed
+     *   True if OK (which can also mean too many path components if
+     *   $return_if_too_many is true); false or array should be returned to
+     *   caller of original 'REST' method (if $this->throwOnError is false).
      */
-    protected function checkUrlPartCount($resource, $min_parts, $max_parts)
+    protected function checkUrlPartCount($parts, $min_parts, $max_parts = 0)
     {
-        $parts = explode('/', $resource);
         if ($min_parts && !isset($parts[$min_parts - 1])) {
-            throw new InvalidArgumentException("Resource URL must have at least $min_parts parts.");
+            return $this->returnError('Invalid request, element ' . ($min_parts - 1) . " is missing in 'directory' path");
         }
         if ($max_parts && isset($parts[$max_parts])) {
-            throw new InvalidArgumentException("Resource URL must have maximum $max_parts parts.");
+            return $this->returnError('Invalid method');
         }
+
+        return true;
     }
 
     /**
-     * Throw some exception.
+     * Throws an exception, mentioning "simulated error".
      *
-     * This is a utility method which throws exeptions similar to
-     * CopernicaRestAPI - to be able to test error handling of client classes
-     * which usually use CopernicaRestAPI. Tests exercising such a client class
-     * often need to call nonexistent endpoints that only this TestApi
-     * implements, in order to simulate this behavior.
+     * This is used to explicitly throw exeptions similar to CopernicaRestAPI,
+     * to be able to test error handling of a caller (in cases where there's no
+     * easy other way to guarantee exceptions being thrown); this class has
+     * implemented some extra 'fake endpoints' to explicitly throw these
+     * exceptions, which call this method.
      *
      * @param string $type
      *   The type of exception.
@@ -578,9 +1250,14 @@ class TestApi
      *   The code for the exception.
      * @param string $method
      *   The HTTP method (verb) that was supposedly used to make the API call.
+     *
+     * @see TestApi::returnError()
      */
     protected function simulateException($type, $code, $method)
     {
+        if (!in_array($method, ['GET', 'POST', 'PUT', 'DELETE'], true)) {
+            throw new InvalidArgumentException("Unknown HTTP method $method.");
+        }
         if (!$code && ($type !== 'invalid_json' || $method !== 'GET')) {
             throw new InvalidArgumentException('$code argument is empty.');
         }
@@ -598,17 +1275,21 @@ class TestApi
                 throw new RuntimeException("CURL returned code $code (\"Simulated error, description N/A\") for $method _simulate_exception/$type/$code. Response contents: \"\".", $code);
 
             case 'http':
+                // Partly duplicated in returnError():
                 $real_code = intval($code);
+                if ($real_code < 100 || ($real_code >= 200 && $real_code < 300) || $real_code >= 600) {
+                    throw new LogicException("simulateException() has no support for HTTP code $real_code");
+                }
                 // Let's make sure to add a newline and a double quote inside
                 // the payload. We don't know much about payloads in errors
                 // though we've seen one response to a POST request contain a
                 // JSON body. It may not be desirable to send an "error" along
                 // with every HTTP code, but it'll do for now.
                 $payload = "{\"error\":\r\n{\"message\":\"Simulated message returned along with HTTP code $real_code.\"}}";
-                // post()/put() methods in CopernicaRestAPI add the headers to
-                // the value returned from Curl - that's just a hardcoded
+                // Non-GET methods in CopernicaRestAPI add the headers to the
+                // value returned from Curl - that's just a hardcoded
                 // inconsistency (if we can call it that).
-                if (in_array($method, ['POST', 'PUT'], true)) {
+                if ($method !== 'GET') {
                     // Just fYI: HTTP 1.1 mandates \r\n between headers and
                     // before the body. The body itself (above) might contain
                     // anything; we just inserted the \r because we can.
@@ -617,13 +1298,13 @@ class TestApi
                         // Compare with string, not int! (Don't match "303-X".)
                         if ($code == '303') {
                             // Regular 303 (where CopernicaRestClient throws no
-                            // excepition) has no body.
-                            $payload = "HTTP/1.1 $real_code No descriptive string\r\nLocation: https://my.domain/someentity/1\r\n\r\n";
+                            // exception) has no body.
+                            $payload = "HTTP/1.1 $real_code No descriptive string\r\nLocation: https://test.test/someentity/1\r\n\r\n";
                         } elseif ($code === '303-nolocation') {
                             // No location, also no body.
                             $payload = "HTTP/1.1 $real_code No descriptive string\r\nX-Fake-Header: fakevalue\r\n\r\n";
                         } elseif ($code === '303-withbody') {
-                            $payload = str_replace('X-Fake-Header2: fakevalue2', 'Location: https://my.domain/someentity/1', $payload);
+                            $payload = str_replace('X-Fake-Header2: fakevalue2', 'Location: https://test.test/someentity/1', $payload);
                         }
                     }
                 }
@@ -641,62 +1322,179 @@ class TestApi
     }
 
     /**
-     * API endpoint emulation: retrieves a single profile.
+     * Throws exception with code 303 and 'current resource', or returns true.
+     *
+     * When we rewrite CopernicaRestApi logic re. throwing exceptions and move
+     * it into CopernicaRestClient for simplification, and remove the
+     * throwOnError property as a result, this method goes away.
+     *
+     * @return true
+     *   Only if $this->throwOnError is false.
+     */
+    protected function return303()
+    {
+        // The live API puts no version identifiers into the location.
+        $payload = "HTTP/1.1 303 See Other (Not Really)\r\nLocation: https://test.test/{$this->currentResource}\r\n\r\n";
+        if ($this->throwOnError) {
+            throw new RuntimeException("{$this->currentMethod} {$this->currentResource} returned HTTP code 303. Response contents: \"$payload\".", 303);
+        }
+        return true;
+    }
+
+    /**
+     * Returns an error body or throws an exception.
+     *
+     * @param string $error_message
+     *   The error message.
+     * @param int $http_code
+     *   (Optional) HTTP response code that was supposedly returned from the
+     *   API, which causes this error to be returned.
+     * @param string $method
+     *   (Optional) HTTP method (verb) that was supposedly used for API call.
+     * @param string $resource
+     *   (Optional) API resource that was supposedly called.
+     *
+     * @return mixed
+     *   If $this->throwOnError is false: error values as they would be
+     *   returned by the CopernicaRestAPI method:
+     *   - GET: an array with an error value.
+     *   - POST/PUT/DELETE: false. (For POST/PUT: only if HTTP 400.)
+     */
+    protected function returnError($error_message, $http_code = 400, $method = '', $resource = '')
+    {
+        if (!is_string($error_message)) {
+            // We'd JSON-encode it incorrectly.
+            throw new InvalidArgumentException('Error message is not a string.');
+        }
+        $method = $method ?: $this->currentMethod;
+        $resource = $resource ?: $this->currentResource;
+        if (!in_array($method, ['GET', 'POST', 'PUT', 'DELETE'], true)) {
+            throw new InvalidArgumentException("Unknown HTTP method $method.");
+        }
+        if ($http_code < 100 || ($http_code >= 200 && $http_code < 300) || $http_code >= 600) {
+            throw new InvalidArgumentException("returnError() has no support for HTTP code $http_code");
+        }
+
+        if ($this->throwOnError) {
+            // Put the error message in the body, and wrap it in an exception
+            // with a non descriptive message - to emulate
+            // CopernicaRestAPI::curlExec(). Code partly duplicated
+            // from simulateException(); inserting \r\n in a differrent place
+            // just for the heck of it.
+            $payload = "{\"error\":{\"message\":\r\n" . json_encode($error_message) . '}}';
+            if ($method !== 'GET') {
+                if ($method === 'PUT' && $http_code == 303) {
+                    throw new InvalidArgumentException("Not sure how to throw 303.. (Do we include error message in body? Location header? A combination of both supposedly never happens and will break CopernicaRestClient.)");
+                }
+                $payload = "HTTP/1.1 $http_code No descriptive string\r\nX-Fake-Header: fakevalue\r\nX-Fake-Header2: fakevalue2\r\n\r\n$payload";
+            }
+            throw new RuntimeException("$method $resource returned HTTP code $http_code. Response contents: \"$payload\".", $http_code);
+        }
+
+        return $method === 'GET' ? ['error' => ['message' => $error_message]] : false;
+    }
+
+    /**
+     * API endpoint emulation: retrieves a single profile or its fields.
      *
      * @param int $profile_id
-     *   A profile ID.
+     *   A profile ID, which must be validated already as existing.
+     * @param int $database_id
+     *   The related database ID.
+     * @param bool $fields_only
+     *   If true, get only the fields. (A separate resource exists for this).
      *
      * @return array
-     *   A structure as returned in the API response.
+     *   A structure as returned in the API response. (This could be an error,
+     *   if $this->throwOnError is false, which is also an array provided we're
+     *   called from a GET method.)
      */
-    protected function getProfile($profile_id)
+    protected function getProfile($profile_id, $database_id, $fields_only)
     {
-        // @todo check what messages live API has for invalid ID. Encode in
-        //   test.
-        if (filter_var($profile_id, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]) === false) {
-            // Copernica returns the same message for any non-numeric argument.
-            return ['error' => ['message' => 'No database with supplied ID']];
-        }
-
-        // @todo check for deleted profiles. Should likely return 'removed'.
-        //   Check for unknown profiles. Likely different message.
-        $database_id = $this->dbFetchField('SELECT database_id FROM profile_db where profile_id = :id', [':id' => $profile_id]);
-        if ($database_id === false) {
-            throw new LogicException("TestApi: need to know what the error message is for getting nonexistent profile.");
-        }
-        if (empty($database_id)) {
-            throw new LogicException("TestApi: need to know what the error message is for getting nonexistent profile.");
-        }
-
         $result = $this->dbFetchAll("SELECT * FROM profile_$database_id WHERE _pid = :id", [':id' => $profile_id]);
         $row = current($result);
         if (empty($row)) {
             throw new LogicException("TestApi: internal inconsistency; profile data doesn't exist in the table which the 'database pointer' references.");
         }
         $id = $row['_pid'];
-        // We could convert created/updated to a date/int and then back to
-        // a string for compatibility, but as long as we're only using
+        $secret = $row['_secret'];
+        // We could convert removed/created/updated to a date/int and then back
+        // to a string for compatibility, but as long as we're only using
         // SQLite that's unnecessary.
         $created = $row['_created'];
         $modified = $row['_modified'];
-        unset($row['_pid'], $row['_created'], $row['_modified']);
-        // For some reason, everything is returned as a string. Except removed.
+        $removed = $row['_removed'];
+        unset($row['_pid'], $row['_secret'], $row['_created'], $row['_modified'], $row['_removed']);
+        $fields = array_map(function ($value) use ($removed) {
+            return $removed ? '' : (string) $value;
+        }, $row);
+        if ($fields_only) {
+            return $fields;
+        }
+        // For some reason, everything is returned as a string. If a profile is
+        // 'removed' all fields are an empty string.
         return [
             'ID' => (string)$id,
-            'fields' => array_map('strval', $row),
+            'fields' => $fields,
             // We don't support interests yet. @todo
             'interests' => [],
             'database' => (string)$database_id,
-            // I have no clue what 'secret' is but it's apparently
-            // - 112 bits hex (28 chars)
-            // - "stored with the profile", so unchanging over updates. (I
-            //   didn't check.) @todo check?
-            // It seems OK to provide something random-ish rather than a
-            // hardcoded value.
-            'secret' => substr(hash("sha1", $id), 0, 28),
+            'secret' => $secret,
             'created' => $created,
             'modified' => $modified,
-            'removed' => false,
+            'removed' => isset($removed) ? $removed : false,
+        ];
+    }
+
+    /**
+     * API endpoint emulation: retrieves a single subprofile.
+     *
+     * @param int $subprofile_id
+     *   A subprofile ID, which must be validated already as existing.
+     * @param int $collection_id
+     *   The related collection ID.
+     * @param bool $fields_only
+     *   If true, get only the fields. (A separate resource exists for this).
+     *
+     * @return array
+     *   A structure as returned in the API response. (This could be an error,
+     *   if $this->throwOnError is false, which is also an array provided we're
+     *   called from a GET method.)
+     */
+    protected function getSubprofile($subprofile_id, $collection_id, $fields_only)
+    {
+        $result = $this->dbFetchAll("SELECT * FROM subprofile_$collection_id WHERE _spid = :id", [':id' => $subprofile_id]);
+        $row = current($result);
+        if (empty($row)) {
+            throw new LogicException("TestApi: internal inconsistency; subprofile data doesn't exist in the table which the 'database pointer' references.");
+        }
+        $id = $row['_spid'];
+        $profile_id =  $row['_pid'];
+        $secret = $row['_secret'];
+        // We could convert removed/created/updated to a date/int and then back
+        // to a string for compatibility, but as long as we're only using
+        // SQLite that's unnecessary.
+        $created = $row['_created'];
+        $modified = $row['_modified'];
+        $removed = $row['_removed'];
+        unset($row['_spid'], $row['_pid'], $row['_secret'], $row['_created'], $row['_modified'], $row['_removed']);
+        $fields = array_map(function ($value) use ($removed) {
+            return $removed ? '' : (string) $value;
+        }, $row);
+        if ($fields_only) {
+            return $fields;
+        }
+        // For some reason, everything is returned as a string. If a
+        // subprofile is 'removed' all fields are an empty string.
+        return [
+            'ID' => (string)$id,
+            'secret' => $secret,
+            'fields' => $fields,
+            'profile' => (string)$profile_id,
+            'collection' => (string)$collection_id,
+            'created' => $created,
+            'modified' => $modified,
+            'removed' => isset($removed) ? $removed : false,
         ];
     }
 
@@ -704,65 +1502,63 @@ class TestApi
      * API endpoint emulation: retrieves profiles.
      *
      * @param int $database_id
-     *   A database ID.
+     *   A database ID, which must be validated already as existing.
      * @param array $parameters
-     *   Request parameters.
+     *   Request parameters, whose names must be lower case matched but field
+     *   names in 'fields' are matched case insensitively.
      *
      * @return array
-     *   A structure as returned in the API response.
+     *   A structure as returned in the API response. (This could be an error,
+     *   if $this->throwOnError is false, which is also an array provided we're
+     *   called from a GET method.)
      */
     protected function getProfiles($database_id, array $parameters)
     {
-        if (
-            filter_var($database_id, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]) === false
-            || !isset($this->knownValues['database'])
-        ) {
-            // Copernica returns the same message for any non-numeric argument.
-            return ['error' => ['message' => 'No database with supplied ID']];
-        }
-
-        // @todo test if the live API just ignores unknown parameters.
-        //   (Guessing and hoping it does, so we don't need to check them.
-        //   Explicitly say this when removing the TODO. Encode this in a test.)
-        if (isset($parameters['orderby']) || isset($parameters['order'])) {
-            // @todo
-            throw new RuntimeException('TestApi does not support order/orderby yet.');
-        }
+        // The official docs for database/X/profiles and
+        // collection|profile/X/subprofiles about a 'dataonly' parameter. This
+        // doesn't unwrap the 'data', and still returns 'total', so if it does
+        // anything, I don't know what.
+        // @TODO test it. If it doesn't do anything for profile and sub, tell
+        //   Copernica. See bottom of ApiBehaviorTest.
         if (!empty($parameters['dataonly'])) {
-            // @todo
-            throw new RuntimeException("TestApi does not support 'dataonly' parameter yet.");
+            throw new LogicException("TestApi does not implement 'dataonly' parameter yet.");
         }
 
         $this->normalizeEntitiesParameters($parameters);
         $data = [];
-        if ($parameters['start'] >= 0 && $parameters['limit'] > 0) {
-            $sql_expr = $this->getSqlConditionsFromParameters($parameters, $database_id);
-            if ($sql_expr) {
-                $sql_expr = " WHERE $sql_expr";
+        $where = '';
+        if ($parameters['total'] || ($parameters['start'] >= 0 && $parameters['limit'] > 0)) {
+            $pdo_parameters = $this->getSqlConditionsFromParameters($parameters, $database_id);
+            $where = '';
+            if ($pdo_parameters) {
+                $where = ' WHERE ' . array_pop($pdo_parameters);
             }
-            // Let's just always limit.
-            $result = $this->dbFetchAll("SELECT * FROM profile_$database_id$sql_expr ORDER BY _pid LIMIT :limit OFFSET :offset", [
-                ':limit' => $parameters['limit'],
-                ':offset' => $parameters['start']
-            ]);
-            foreach ($result as $row) {
-                $id = $row['_pid'];
-                $created = $row['_created'];
-                $modified = $row['_modified'];
-                unset($row['_pid'], $row['_created'], $row['_modified']);
-                $data[] = [
-                    'ID' => (string)$id,
-                    'fields' => array_map('strval', $row),
-                    // We don't support interests yet. @todo
-                    'interests' => [],
-                    'database' => (string)$database_id,
-                    // See getProfile().
-                    'secret' => substr(hash("sha1", $id), 0, 28),
-                    'created' => $created,
-                    'modified' => $modified,
-                    // 'removed' is always false in entities that are part of lists.
-                    'removed' => false,
-                ];
+            if ($parameters['start'] >= 0 && $parameters['limit'] > 0) {
+                $orderby = ' ORDER BY ' . $this->getSqlOrderByFromParameters($parameters, '_pid', $database_id);
+                // Let's just always limit.
+                $pdo_parameters_copy = $pdo_parameters;
+                $pdo_parameters_copy['limit'] = $parameters['limit'];
+                $pdo_parameters_copy['offset'] = $parameters['start'];
+                $result = $this->dbFetchAll("SELECT * FROM profile_$database_id$where$orderby LIMIT :limit OFFSET :offset", $pdo_parameters_copy);
+                foreach ($result as $row) {
+                    $id = $row['_pid'];
+                    $created = $row['_created'];
+                    $modified = $row['_modified'];
+                    $secret = $row['_secret'];
+                    unset($row['_pid'], $row['_secret'], $row['_created'], $row['_modified'], $row['_removed']);
+                    $data[] = [
+                        'ID' => (string)$id,
+                        'fields' => array_map('strval', $row),
+                        // We don't support interests yet. @todo
+                        'interests' => [],
+                        'database' => (string)$database_id,
+                        'secret' => $secret,
+                        'created' => $created,
+                        'modified' => $modified,
+                        // 'removed' is always false in entities that are in lists.
+                        'removed' => false,
+                    ];
+                }
             }
         }
         $response = [
@@ -772,7 +1568,7 @@ class TestApi
             'data' => $data
         ];
         if ($parameters['total']) {
-            $response['total'] = (int)$this->dbFetchField("SELECT COUNT(*) FROM profile_$database_id");
+            $response['total'] = (int)$this->dbFetchField("SELECT COUNT(*) FROM profile_$database_id$where", $pdo_parameters);
         }
 
         return $response;
@@ -782,60 +1578,47 @@ class TestApi
      * API endpoint emulation: retrieves profiles.
      *
      * @param int $collection_id
-     *   A collection ID.
+     *   A collection ID, which must be validated already as existing.
      * @param array $parameters
-     *   Request parameters.
+     *   Request parameters, whose names must be lower case matched but field
+     *   names in 'fields' are matched case insensitively.
      *
      * @return array
-     *   A structure as returned in the API response.
+     *   A structure as returned in the API response. (This could be an error,
+     *   if $this->throwOnError is false, which is also an array provided we're
+     *   called from a GET method.)
      */
     protected function getSubprofiles($collection_id, array $parameters)
     {
-        // @todo test if this is also the case for the live API on POST (and
-        //   create test to encode this). Only tried it on getProfiles so far.
-        if (
-            filter_var($collection_id, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]) === false
-            || !isset($this->knownValues['collection'][$collection_id])
-        ) {
-            throw new LogicException("TestApi: need to know what the error message is for retrieving subprofiles from nonexistent collection.");
-            // Copernica returns the same message for any non-numeric argument.
-            return ['error' => ['message' => 'No collection with supplied ID']];
-        }
-
-        // @todo test if the live API just ignores unknown parameters.
-        //   (Guessing and hoping it does, so we don't need to check them.
-        //   Explicitly say this when removing the TODO. Encode this in a test.)
-        if (isset($parameters['orderby']) || isset($parameters['order'])) {
-            // @todo
-            throw new RuntimeException('TestApi does not support order/orderby yet.');
-        }
+        // @todo see getProfiles()
         if (!empty($parameters['dataonly'])) {
-            // @todo
-            throw new RuntimeException("TestApi does not support 'dataonly' parameter yet.");
+            throw new LogicException("TestApi does not implement 'dataonly' parameter yet.");
         }
 
         $this->normalizeEntitiesParameters($parameters);
         $data = [];
+        $where = '';
         if ($parameters['start'] >= 0 && $parameters['limit'] > 0) {
-            $sql_expr = $this->getSqlConditionsFromParameters($parameters, $collection_id, true);
-            if ($sql_expr) {
-                $sql_expr = " WHERE $sql_expr";
+            $pdo_parameters = $this->getSqlConditionsFromParameters($parameters, $collection_id, true);
+            $where = '';
+            if ($pdo_parameters) {
+                $where = ' WHERE ' . array_pop($pdo_parameters);
             }
+            $orderby = ' ORDER BY ' . $this->getSqlOrderByFromParameters($parameters, '_spid', $collection_id, true);
             // Let's just always limit.
-            $result = $this->dbFetchAll("SELECT * FROM subprofile_$collection_id$sql_expr ORDER BY _spid LIMIT :limit OFFSET :offset", [
-                ':limit' => $parameters['limit'],
-                ':offset' => $parameters['start']
-            ]);
+            $pdo_parameters['limit'] = $parameters['limit'];
+            $pdo_parameters['offset'] = $parameters['start'];
+            $result = $this->dbFetchAll("SELECT * FROM subprofile_$collection_id$where$orderby LIMIT :limit OFFSET :offset", $pdo_parameters);
             foreach ($result as $row) {
                 $id = $row['_spid'];
                 $profile_id = $row['_pid'];
                 $created = $row['_created'];
                 $modified = $row['_modified'];
-                unset($row['_spid'], $row['_pid'], $row['_created'], $row['_modified']);
+                $secret = $row['_secret'];
+                unset($row['_spid'], $row['_pid'], $row['_secret'], $row['_created'], $row['_modified'], $row['_removed']);
                 $data[] = [
                     'ID' => (string)$id,
-                    // See getProfile().
-                    'secret' => substr(hash("sha1", $id), 0, 28),
+                    'secret' => $secret,
                     'fields' => array_map('strval', $row),
                     'profile' => (string)$profile_id,
                     'collection' => (string)$collection_id,
@@ -852,7 +1635,7 @@ class TestApi
             'data' => $data
         ];
         if ($parameters['total']) {
-            $response['total'] = (int)$this->dbFetchField("SELECT COUNT(*) FROM subprofile_$collection_id");
+            $response['total'] = (int)$this->dbFetchField("SELECT COUNT(*) FROM subprofile_$collection_id$where");
         }
 
         return $response;
@@ -862,40 +1645,31 @@ class TestApi
      * API endpoint emulation: creates a new profile.
      *
      * @param int $database_id
-     *   A database ID.
+     *   A database ID, which must be validated already as existing.
      * @param array $data
-     *   Data as provided to the post() method.
+     *   Data as provided to the request. The first-level keys must be
+     *   lower case but field names in 'fields' are matched case insensitively.
      *
-     * @return int|array
-     *   The ID of the created profile, or standardized 'error array'.
+     * @return int|false
+     *   The ID of the created profile, or false if an error is encountered and
+     *   $this->throwOnError is false / we're called from a non-GET method.
      */
     protected function postProfile($database_id, array $data)
     {
-        // @todo test if this is also the case for the live API on POST (and
-        //   create test to encode this). Only tried it on getProfiles so far.
-        if (
-            filter_var($database_id, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]) === false
-            || !isset($this->knownValues['database'])
-        ) {
-            // Copernica returns the same message for any non-numeric argument.
-            return ['error' => ['message' => 'No database with supplied ID']];
+        if (isset($data['interests'])) {
+            throw new LogicException("TestApi does not implement 'interests' for {$this->currentMethod} {$this->currentResource} yet.");
         }
-        // @todo test what happens for the live API when we pass any properties
-        //   besides 'fields'. Also encode this in tests. At any rate we should
-        //   keep throwing an exception if 'interests' is passed, as long as
-        //   we don't store those.
-        if (count($data) != 1 || !isset($data['fields'])) {
-            throw new LogicException("TestApi so far requires a data payload with a 'fields' key, and nothing else.");
+        // Unknown properties / fields do not cause errors; they're ignored.
+        // Only a non-array 'fields' property is not parseable.
+        if (isset($data['fields']) && !is_array($data['fields'])) {
+            // This only happens on POST because others can't pass non-arrays.
+            return $this->returnError('Invalid data provided');
         }
-
-        // @todo test what happens for the live API when we pass unknown fields.
-        //   Are they just ignored?
-        // @todo test if the live API is OK with misspelling case of fields.
-        //   for both of these points, encode this in tests. (We may need to
-        //   make an effort here to emulate mis-cased fields because of
-        //   filterFields().)
-        $this->filterFields($data['fields'], $database_id);
-        $id = $this->insertEntityRecord("profile_$database_id", $data['fields']);
+        $insert_data = ['_secret' => $this->getRandomSecret()];
+        if (!empty($data['fields'])) {
+            $insert_data += $this->normalizeFieldsInput($data['fields'], $database_id);
+        }
+        $id = $this->insertEntityRecord("profile_$database_id", $insert_data);
         $this->dbInsertRecord('profile_db', ['profile_id' => $id, 'database_id' => $database_id]);
         return $id;
     }
@@ -908,120 +1682,237 @@ class TestApi
      * @param int $collection_id
      *   A collection ID.
      * @param array $data
-     *   Data as provided to the post() method.
+     *   Data as provided to the request. The first-level keys must be
+     *   lower case but field names in 'fields' are matched case insensitively.
      *
-     * @return int|array
-     *   The ID of the created subprofile, or standardized 'error array'.
+     * @return int|false
+     *   The ID of the created subprofile, or false if an error is encountered
+     *   and $this->throwOnError is false / we're called from a non-GET method.
      */
     protected function postSubprofile($profile_id, $collection_id, array $data)
     {
-        // @todo test if this is also the case for the live API on POST (and
-        //   create test to encode this). Only tried it on getProfiles so far.
+        // Profile ID was validated in initRestCall(). Collection ID was not.
         if (
             filter_var($collection_id, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]) === false
             || !isset($this->knownValues['collection'][$collection_id])
         ) {
-            throw new LogicException("TestApi: need to know what the error message is for inserting subprofile in nonexistent collection.");
-            // Copernica returns the same message for any non-numeric argument.
-            return ['error' => ['message' => 'No collection with supplied ID']];
+            // Copernica returns the same message for any non-numeric argument
+            // (though its concept is not consistent with the "invalid ID"
+            // messages in other places.)
+            return $this->returnError('Subprofile could not be created');
         }
-        // @todo test if below is also the case for the live API on POST (and
-        //   create test to encode this). Only tried it on getProfiles so far.
-        if (
-            filter_var($profile_id, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]) === false
-            // @todo test both unknown profile and deleted profile Supposedly
-            //   the latter would return a zero here, after we implement it.
-            //   Maybe there are differing messages.
-            || empty($this->dbFetchField('SELECT database_id FROM profile_db where profile_id = :id', [':id' => $profile_id]))
-        ) {
-            throw new LogicException("TestApi: need to know what the error message is for inserting subprofile for nonexistent profile.");
-            return ['error' => ['message' => 'No database with supplied ID']];
-        }
-
-        // @todo test what happens for the live API when we pass unknown fields.
-        //   Are they just ignored?
-        // @todo test if the live API is OK with misspelling case of fields.
-        //   for both of these points, encode this in tests. (We may need to
-        //   make an effort here to emulate mis-cased fields because of
-        //   filterFields().)
-        $this->filterFields($data, $collection_id, true);
-        $data['_pid'] = $profile_id;
+        $data = ['_pid' => $profile_id, '_secret' => $this->getRandomSecret()]
+            + $this->normalizeFieldsInput($data, $collection_id, true);
         $id = $this->insertEntityRecord("subprofile_$collection_id", $data);
         $this->dbInsertRecord('subprofile_coll', ['subprofile_id' => $id, 'collection_id' => $collection_id]);
         return $id;
     }
 
     /**
-     * API endpoint emulation: updates profile fields.
+     * API endpoint emulation: updates a single profile or its fields.
      *
      * @param int $profile_id
-     *   A profile ID.
+     *   A profile ID, which must be validated already as existing.
+     * @param int $database_id
+     *   The related database ID.
      * @param array $data
-     *   Data as provided to the put() method.
+     *   Data as provided to the request. The first-level keys must be
+     *   lower case but field names in 'fields' are matched case insensitively.
+     * @param bool $fields_only
+     *   If true, the data represents only the fields. (A separate resource
+     *   exists for this).
      *
      * @return true
     */
-    protected function putProfileFields($profile_id, array $data)
+    protected function putProfile($profile_id, $database_id, array $data, $fields_only)
     {
-        // @todo test both unknown profile and deleted profile. Supposedly
-        //   the latter would return a zero here, after we implement it.
-        //   Maybe there are differing messages.
-        $database_id = $this->dbFetchField('SELECT database_id FROM profile_db where profile_id = :id', [':id' => $profile_id]);
-        if (!$database_id) {
-            throw new LogicException("TestApi so far requires a known un-deleted profile id.");
+        $secret = null;
+        if (!$fields_only) {
+            // Possible data: 'fields', 'interests', 'secret'. Others are
+            // ignored; a 303 response is returned.
+            if (isset($data['interests'])) {
+                throw new LogicException("TestApi does not implement 'interests' for {$this->currentMethod} {$this->currentResource} yet.");
+            }
+            if (isset($data['secret'])) {
+                $secret = static::normalizeSecret($data['secret']);
+            }
+            // Unlike POST and PUT /database/ID/profiles, an illegal 'fields'
+            // array does not generate an error.
+            $data = isset($data['fields']) && is_array($data['fields']) ? $data['fields'] : [];
+        }
+        $data = $this->normalizeFieldsInput($data, $database_id);
+        // 'fields' without any valid fields does not update 'modified'.
+        if ($data || isset($secret)) {
+            // 'modified' gets updated if a field is updated. (Not if only the
+            // secret gets updated.) Updating removed records returns true and
+            // updates 'modified'. (We don't technically know if field values
+            // are updated because they never get returned anymore, but doing
+            // so is the least code.)
+            if ($data) {
+                // @TODO this is not exact enough. Only if record will actually change.
+                $data['_modified'] = $this->getDateTimeApiExpr();
+            }
+            if (isset($secret)) {
+                $data['_secret'] = $secret;
+            }
+            $this->dbUpdateRecord("profile_$database_id", $data, '_pid', $profile_id);
+        }
+        return $this->return303();
+    }
+
+
+    /**
+     * API endpoint emulation: updates several profiles.
+     *
+     * @param int $database_id
+     *   A database ID, which must be validated already as existing.
+     * @param array $data
+     *   Data as provided to the request. The first-level keys must be
+     *   lower case but field names in 'fields' are matched case insensitively.
+     * @param array $parameters
+     *   Request parameters, whose names must be lower case matched but field
+     *   names in 'fields' are matched case insensitively.
+     *
+     * @return bool
+     *   True on success; error value (which is only false in practice) only
+     *   if if $this->throwOnError is false.
+     *
+     * @TODO support for create=1
+     */
+    protected function putProfiles($database_id, array $data, array $parameters)
+    {
+        if (isset($data['interests'])) {
+            throw new LogicException("TestApi does not implement 'interests' for {$this->currentMethod} {$this->currentResource} yet.");
+        }
+        // Unknown properties / fields do not cause errors; they're ignored.
+        // Only a non-array 'fields' property is not parseable.
+        if (isset($data['fields']) && !is_array($data['fields'])) {
+            // This only happens on POST because others can't pass non-arrays.
+            return $this->returnError('Invalid data provided');
         }
 
-        // @todo test what happens for the live API when we pass unknown fields.
-        //   Are they just ignored?
-        // @todo test if the live API is OK with misspelling case of fields.
-        //   for both of these points, encode this in tests. (We may need to
-        //   make an effort here to emulate mis-cased fields because of
-        //   filterFields().)
-        $this->filterFields($data, (int)$database_id);
-        // @todo check in the live API what happens when the profile does not
-        //   exist anymore. Encode it in a test. Implement here.
-        $this->updateEntityRecord("profile_$database_id", $data, '_pid', $profile_id);
+        if (empty($data['fields'])) {
+            $updates = $this->normalizeFieldsInput($data['fields'], $database_id);
+            if ($updates) {
+                $updates['_modified'] = $this->getDateTimeApiExpr();
+                $pdo_parameters = $this->getSqlConditionsFromParameters($parameters, $database_id);
+                $where_expression = '';
+                if ($pdo_parameters) {
+                    $where_expression = array_pop($pdo_parameters);
+                }
+                $this->dbUpdateRecord("profile_$database_id", $updates, $where_expression, $pdo_parameters);
+            }
+        }
         return true;
     }
 
     /**
-     * API endpoint emulation: updates subprofile fields.
+     * API endpoint emulation: updates subprofile.
      *
      * @param int $subprofile_id
-     *   A subprofile ID.
+     *   A subprofile ID, which must be validated already as existing.
+     * @param int $collection_id
+     *   The related collection ID.
      * @param array $data
-     *   Data as provided to the put() method.
+     *   Data as provided to the request. The first-level keys must be
+     *   lower case but field names in 'fields' are matched case insensitively.
+     * @param bool $fields_only
+     *   If true, the data represents only the fields. (A separate resource
+     *   exists for this).
      *
      * @return true
      */
-    protected function putSubprofileFields($subprofile_id, array $data)
+    protected function putSubprofile($subprofile_id, $collection_id, array $data, $fields_only)
     {
-        // @todo test both unknown profile and deleted profile. Supposedly
-        //   the latter would return a zero here, after we implement it.
-        //   Maybe there are differing messages.
-        $collection_id = $this->dbFetchField('SELECT collection_id FROM subprofile_coll where subprofile_id = :id', [':id' => $subprofile_id]);
-        if (!$collection_id) {
-            throw new LogicException("TestApi so far requires a known un-deleted profile id.");
+        $secret = null;
+        if (!$fields_only) {
+            // Possible data: 'fields' and 'secret'. Others are ignored; a 303
+            // response is returned.
+            if (isset($data['secret'])) {
+                $secret = static::normalizeSecret($data['secret']);
+            }
+            // Unlike POST and PUT /database/ID/profiles, an illegal 'fields'
+            // array does not generate an error.
+            $data = isset($data['fields']) && is_array($data['fields']) ? $data['fields'] : [];
+        }
+        $data = $this->normalizeFieldsInput($data, $collection_id, true);
+        // 'fields' without any valid fields does not update 'modified'.
+        if ($data || isset($secret)) {
+            // 'modified' gets updated if a field is updated. (Not if only the
+            // secret gets updated.) Updating removed records returns true and
+            // updates 'modified'. (We don't technically know if field values
+            // are updated because they never get returned anymore, but doing
+            // so is the least code.)
+            if ($data) {
+                // @TODO this is not exact enough. Only if record will actually change.
+                $data['_modified'] = $this->getDateTimeApiExpr();
+            }
+            if (isset($secret)) {
+                $data['_secret'] = $secret;
+            }
+            $this->dbUpdateRecord("subprofile_$collection_id", $data, '_spid', $subprofile_id);
+        }
+        return $this->return303();
+    }
+
+    /**
+     * API endpoint emulation: deletes a profile.
+     *
+     * This automatically deletes existing subprofiles. (But it doesn't prevent
+     * new subprofiles from being created - which feels like an oversight.)
+     *
+     * @param int $profile_id
+     *   A profile ID, which must be validated already as existing.
+     * @param int $database_id
+     *   The related database ID.
+     *
+     * @return ?
+     * @todo check return value in real API. doc. Test repeated delete.
+     */
+    protected function deleteProfile($profile_id, $database_id)
+    {
+        // Deleting a profile empties out the fields; it doesn't remove them
+        // (and still has the created/updated fields), it just adds a 'removed'
+        // time. We won't empty out the fields in the database for a 'removed'
+        // entity, but will take care of that on output.
+        $now = $this->getDateTimeApiExpr();
+        if (isset($this->databasesStructure[$database_id]['collections'])) {
+            // First delete subprofiles for this profile in every collection.
+            // dbUpdateRecord() also works for this (updating multiple records).
+            foreach ($this->databasesStructure[$database_id]['collections'] as $collection_id => $data) {
+                $this->dbUpdateRecord("subprofile_$collection_id", ['_removed' => $now], '_pid', $profile_id);
+            }
         }
 
-        // @todo test what happens for the live API when we pass unknown fields.
-        //   Are they just ignored?
-        // @todo test if the live API is OK with misspelling case of fields.
-        //   for both of these points, encode this in tests. (We may need to
-        //   make an effort here to emulate mis-cased fields because of
-        //   filterFields().)
-        $this->filterFields($data, (int)$collection_id, true);
-        // @todo check in the live API what happens when the subprofile does
-        //   not exist anymore. Encode it in a test. Implement here.
-        $this->updateEntityRecord("subprofile_$collection_id", $data, '_spid', $subprofile_id);
-        return true;
+        return $this->dbUpdateRecord("profile_$database_id", ['_removed' => $now], '_spid', $profile_id);
+    }
+
+    /**
+     * API endpoint emulation: deletes a subprofile.
+     *
+     * @param int $subprofile_id
+     *   A subprofile ID, which must be validated already as existing.
+     * @param int $collection_id
+     *   The related collection ID.
+     *
+     * @return ?
+     * @todo check return value in real API. doc. Test repeated delete.
+     */
+    protected function deleteSubprofile($subprofile_id, $collection_id)
+    {
+        // Deleting a profile empties out the fields; it doesn't remove them
+        // (and still has the created/updated fields), it just adds a 'removed'
+        // time. We won't empty out the fields in the database for a 'removed'
+        // entity, but will take care of that on output.
+        $now = $this->getDateTimeApiExpr();
+        return $this->dbUpdateRecord("subprofile_$collection_id", ['_removed' => $now], '_spid', $subprofile_id);
     }
 
     /**
      * Generates a normalized set of parameters for 'entities' requests.
      *
      * start / limit / total are always guaranteed to be set afterwards; start
-     * / limit are integers and total boolean. Note start / limit  can be
+     * / limit are integers and total boolean. Note start / limit can be
      * passed back to the caller as-is but we may not be able to just pass it
      * into the SQL query as-is. We likely are better off not querying anything
      * if start < 0 or limit <= 0.
@@ -1036,105 +1927,197 @@ class TestApi
      *   by reference.
      * @param int $default_limit
      *   (Optional) default limit, in cases where it's different than 100.
-     *
-     * @todo check if there is a maximum limit that can be set for queries.
-     * @todo encode all below assumptions about parameters in tests (that can
-     *   be run against live Copernica, to see if our assumptions still hold).
      */
-    public function normalizeEntitiesParameters(array &$parameters, $default_limit = 100)
+    protected function normalizeEntitiesParameters(array &$parameters, $default_limit = 100)
     {
-        if (!isset($parameters['limit'])) {
-            // Limit is 100 for profiles. I think it's 1000 for mailing
-            // statistics though not 100% sure. Not tested other queries yet.
+        // Limit parameter: all nonempty arrays and true become 1,
+        // false/null/strings become 0. Empty array is ignored.
+        // If numeric: convert to int. The resulting number of
+        // elements (and 'count' value) returned will be 0 if
+        // 'limit' < 1.
+        if (!isset($parameters['limit']) || $parameters['limit'] === []) {
             $parameters['limit'] = $default_limit;
-        } elseif (!is_numeric($parameters['limit'])) {
-            // Strange parameters lead to an answer with start/limit/count=0
-            throw new RuntimeException('todo check if LIMIT 0 returns a valid set of 0 rows in SQLite.');
-            $parameters['limit'] = 0;
         } else {
-            // Round all numeric values to int: if the result is negative or 0,
-            // then the 'limit' value returned to the caller is this value and
-            // the 'count' is always 0.
+            // This works for strings/null/bool/nonempty array.
             $parameters['limit'] = (int) $parameters['limit'];
         }
 
-        // Basically same for start - except default is 0.
-        if (!isset($parameters['start']) || !is_numeric($parameters['start'])) {
+        // Basically same for start - except default is 0. The returned
+        // number of elements/count will be 0 if 'start' < 0.
+        if (!isset($parameters['start'])) {
             $parameters['start'] = 0;
         } else {
-            // This will work for negative numbers as well: if the result is
-            // negative, then the 'start' value returned to the caller is this
-            // negative integer and the 'count' is always 0.
             $parameters['start'] = (int) $parameters['start'];
         }
 
-        // 'total' seems to have the same logic in that any string except "true"
-        // and any number between (not including) 1 and -1 evaluate to false;
-        // all others to default/true. Always convert it to boolean here.
+        // Type coercion for the 'total' argument: all arrays (including empty)
+        // evaluate to true; all abs(number) < 1 evaluate to false; all other
+        // strings except "true" (case insensitive) evaluate to false;. (This
+        // is not equivalent to any type coercions in normalizeInputValue().)
         if (!isset($parameters['total'])) {
             $parameters['total'] = true;
-        } elseif (is_numeric($parameters['total'])) {
-            $parameters['total'] = abs($parameters['total']) >= 1;
         } elseif (!is_bool($parameters['total'])) {
-            $parameters['total'] = $parameters['total'] !== 'true';
+            if (!is_scalar($parameters['total'])) {
+                $parameters['total'] = true;
+            } elseif (is_string($parameters['total']) && !is_numeric($parameters['total'])) {
+                $parameters['total'] = strtolower($parameters['total']) === 'true';
+            } else {
+                $parameters['total'] = abs($parameters['total']) >= 1;
+            }
         }
     }
 
     /**
      * Constructs SQL 'WHERE' conditions from API call parameters.
      *
+     * Some rules:
+     * - the 'fields' parameter name itself is matched case sensitively.
+     *   (Tested on GET & PUT database/X/profiles).
+     * - A non-array 'fields' parameter may or may not lead to an error.
+     * - Field names are matched case insensitively.
+     * - Multiple conditions for the same field are ANDed.
+     * - Unknown fields are ignored.
+     *
      * @param array $parameters
-     *   API call parameters. Only the 'fields' parameter is looked at.
+     *   API call parameters. Only the 'fields' parameter is looked at. The
+     *   'fields' key must have the correct case; the field names themselves
+     *   are fine in every case.
+     * @param int $id
+     *   Database ID or collection ID
+     * @param bool $for_collection
+     *   (Optional) if true, the ID is a database ID; collection ID otherwise.
+     *
+     * @return array
+     *   Empty array if no SQL WHERE conditions should be applied, otherwise,
+     *   array with
+     *   - zero or more array keys with the names/values for the PDO
+     *     parameters (all starting with 'cond');
+     *   - the very last array element being the SQL fragment usable inside a
+     *     WHERE statement, which uses these parameters.
+     */
+    protected function getSqlConditionsFromParameters(array $parameters, $id, $for_collection = false)
+    {
+        $pdo_parameters = [];
+        // For now (profiles/subprofiles) we assume we always need to add a
+        // '_removed' condition. This means the return value is never empty.
+        $clauses = ['_removed IS NULL'];
+        // Non-array 'fields' is just ignored.
+        if (isset($parameters['fields']) && is_array($parameters['fields'])) {
+            $available_fields = $this->getFields($id, $for_collection);
+
+            // CopernicaRestApi ignores array keys; we don't check them.
+            foreach ($parameters['fields'] as $key => $field_statement) {
+                // - The live API ignores expressions we can't match.
+                // - Spaces are just part of the expression:
+                //   - 'field=== name' matches values equal to "= name".
+                //   - 'field ==name' is ignored (because it matches "field ").
+                // - The expression as a whole is still trimmed so
+                //   ' field==name ' is not ignored / does filter on "name".
+                if (!preg_match('/^(.+?)([\=\<\>\!\~]{1,2})(.*)$/', trim($field_statement), $matches)) {
+                    continue;
+                }
+                // The live API ignores unknown fields.
+                if (!isset($available_fields[strtolower($matches[1])])) {
+                    continue;
+                }
+                $field_struct = $available_fields[strtolower($matches[1])];
+                // @todo we should likely mangle more values depending on their
+                //   field types (e.g. date values), to match correctly. Make
+                //   test for date matching.
+//                if (!in_array($field_struct['type'], ['integer', 'float'], true)) {
+//                    $matches[3] = "'$matches[3]'";
+//                }
+                switch ($matches[2]) {
+                    case '==':
+                        $pdo_param = 'cond' . count($clauses) . 'x';
+                        $pdo_parameters[$pdo_param] = $matches[3];
+                        $clauses[] = "$matches[1] = :$pdo_param";
+                        break;
+
+                    case '!=':
+                        // != would actually also be good... for SQLite.
+                        $pdo_param = 'cond' . count($clauses) . 'x';
+                        $pdo_parameters[$pdo_param] = $matches[3];
+                        $clauses[] = "$matches[1] <> :$pdo_param";
+                        break;
+
+                    case '>':
+                    case '<':
+                    case '>=':
+                    case '<=':
+                        if (!in_array($field_struct['type'], ['integer', 'float'], true)) {
+                            throw new LogicException("Comparison operator $matches[2] in 'fields' parameter has not yet been tested for use yet.");
+                        }
+                        $pdo_param = 'cond' . count($clauses) . 'x';
+                        $pdo_parameters[$pdo_param] = $matches[3];
+                        $clauses[] = "$matches[1] $matches[2] :$pdo_param";
+                        break;
+
+                    case '=~':
+                        // The '%' should already be part of the expression
+                        // passed to us so this should be OK... Haven't done a
+                        // large amount of testing.
+                        // @todo test case sensitivity / collation vs SQLite?
+                        $pdo_param = 'cond' . count($clauses) . 'x';
+                        $pdo_parameters[$pdo_param] = $matches[3];
+                        $clauses[] = "$matches[1] LIKE :$pdo_param";
+                        break;
+
+                    case '!~':
+                        $pdo_param = 'cond' . count($clauses) . 'x';
+                        $pdo_parameters[$pdo_param] = $matches[3];
+                        $clauses[] = "$matches[1] NOT LIKE :$pdo_param";
+                        break;
+
+                    default:
+                        throw new LogicException("Comparison operator $matches[2] in 'fields' parameter is not supported by TestApi (yet).");
+                }
+            }
+        }
+
+        if ($clauses) {
+            array_push($pdo_parameters, implode(' AND ', $clauses));
+        }
+        return $pdo_parameters;
+    }
+
+    /**
+     * Constructs SQL 'ORDER BY' condition from API call parameters.
+     *
+     * Rules:
+     * - 'orderby'/'order' parameter names themselves are matched case
+     *    sensitively. (Tested on GET database/X/profiles).
+     * - The values are treated case insensitively.
+     * - Unknown 'orderby' fields are ignored.
+     * = Only one field in 'orderby'. No leading/trailing spaces.
+     * - 'desc' or 'descending' leads to sorting descending. All else ascending.
+     *
+     * @param array $parameters
+     *   API call parameters.
+     * @param string $default_field
+     *   The default field to order by if an 'orderby' parameter is not found.
      * @param int $id
      *   Database ID or collection ID
      * @param bool $for_collection
      *   (Optional) if true, the ID is a database ID; collection ID otherwise.
      *
      * @return string
-     *   If (valid) fields are found: SQL conditions usable inside a WHERE
-     *   statement; possibly multiple separated by 'AND'. Otherwise, empty
-     *   string.
+     *   A valid "ORDER BY" clause, not including the keywords "ORDER BY".
      */
-    protected function getSqlConditionsFromParameters(array $parameters, $id, $for_collection = false)
+    protected function getSqlOrderByFromParameters(array $parameters, $default_field, $id, $for_collection = false)
     {
-        $clauses = [];
-        if (isset($parameters['fields'])) {
-            if (!is_array($parameters['fields'])) {
-                // @todo check how the real API behaves, encode it in a test,
-                //   possibly change the below throw.
-                throw new RuntimeException("'fields' parameter is not an array.");
-            }
+        // We only match known field names so the SQL is safe.
+        if (isset($parameters['orderby']) && is_string($parameters['orderby'])) {
             $available_fields = $this->getFields($id, $for_collection);
-
-            foreach ($parameters['fields'] as $key => $field_statement) {
-                if (!is_int($key)) {
-                    // @todo Maybe this is unnecessary. This depends on whether
-                    //   it is possible to pass non-numeric keys to the real
-                    //   API through URL parameters, I guess. Haven't checked.
-                    throw new RuntimeException("'fields' parameter has non-numeric key. (Are you sure it was specified correctly?)");
-                }
-                if (!preg_match('/^\s*(\w+)\s*([\=\<\>\!\~]{1,2})\s*(.*?)\s*$/', $field_statement, $matches)) {
-                    throw new RuntimeException("'fields' parameter $key has unrecognized syntax ($field_statement). (This may or may not point to a bug in TestApi code.)");
-                }
-                if ($matches[2] !== '==') {
-                    // @todo support more.
-                    throw new RuntimeException("Comparison operator $matches[2] in 'fields' parameter is not supported by TestApi (yet).");
-                }
-                if (!isset($available_fields[$matches[1]])) {
-                    // @todo check how the real API behaves, encode it in a
-                    //   test, possibly change the below throw.
-                    // @todo support id, modified and code.
-                    throw new RuntimeException("Field $matches[2] in 'fields' parameter is apparently not present in the entity we're filtering. (Should this be supported?)");
-                }
-                $field_struct = $available_fields[$matches[1]];
-                if (!in_array($field_struct['type'], ['integer', 'float'], true)) {
-                    $matches[3] = "'$matches[3]'";
-                }
-                $clauses[] = "$matches[1] = $matches[3]";
+            if (isset($available_fields[strtolower($parameters['orderby'])])) {
+                $default_field = $parameters['orderby'];
             }
         }
 
-        return implode(' AND ', $clauses);
+        return $default_field . ' '
+            . ((isset($parameters['order']) && is_string($parameters['order'])
+                && in_array(strtolower($parameters['order']), ['desc', 'descending'], true))
+                ? 'DESC' : 'ASC');
     }
 
     /**
@@ -1265,23 +2248,70 @@ class TestApi
     }
 
     /**
-     * Filters array of field-value pairs to only contain existing fields.
+     * Returns a random secret string.
+     */
+    protected function getRandomSecret()
+    {
+        // Apparently 28 hex chars -> 14 bytes. Stored with (sub)profile, so
+        // this is needed with every insert.]
+        return bin2hex(openssl_random_pseudo_bytes(14));
+    }
+
+    /**
+     * Gets date/time expression, usable as storable database value.
      *
-     * @param array $record
-     *   Possible database record / field-value pairs; modified by reference.
+     * @param string $time_expr
+     *   (Optional) time expression.
+     *
+     * @return string
+     *   The date expression, formatted as the API would.
+     */
+    private function getDateTimeApiExpr($time_expr = 'now')
+    {
+        // Remember if we set date in constructor that MIGHT NOT have timezone,
+        //  we need to pass timezone. And if it MIGHT have a timezone by itself,
+        // we must still set timezone again afterwards.
+        $date = new DateTime($time_expr);
+        if ($this->getTimezone()) {
+            $date->setTimezone(new DateTimeZone($this->getTimezone()));
+        }
+        return $date->format('Y-m-d H:i:s');
+    }
+    
+    /**
+     * Strips nonexistent fields and normalizes the values as the API does.
+     *
+    * @param array $input
+     *   Input values for field-value pairs.
      * @param int $id
      *   Database ID or collection ID
-     * @param bool $for_collection
-     *   (Optional) if true, the ID is a database ID; collection ID otherwise.
+     * @param bool $is_subprofile
+     *   (Optional) if true, the data is for a subprofile and $id must be a
+     *   collection ID; otherwise it's for a profile and $id is a database ID.
+     *
+     * @return array
+     *   Normalized field values (as they would apparently be saved by the live
+     *   API, because that's how we get them returned from the live API, keyed
+     *   by the field names with casing as used in our structure; in case of
+     *   'duplicate' (case insensitive) field names, only the last one remains.
      */
-    protected function filterFields(array &$record, $id, $for_collection = false)
+    protected function normalizeFieldsInput(array $input, $id, $is_subprofile = false)
     {
-        $field_names = array_flip($this->getFields($id, $for_collection, true));
-        foreach (array_keys($record) as $field_name) {
-            if (!isset($field_names[$field_name])) {
-                unset($record[$field_name]);
+        $fields = $this->getFields($id, $is_subprofile);
+        // We rebuild the array rather than unsetting unknown values in $input,
+        // so that we deduplicate any duplicate (differently cased) field
+        // names, keeping only the last encountered one.
+        $normalized = [];
+        foreach ($input as $field_name => $value) {
+            $field_name = strtolower($field_name);
+            if (isset($fields[$field_name])) {
+                $field_struct = $fields[$field_name];
+                // Use the non-lowercased real fieldname as key.
+                $normalized[$field_struct['name']] = static::normalizeInputValue($value, $field_struct, $this->getTimezone());
             }
         }
+
+        return $normalized;
     }
 
     /**
@@ -1298,11 +2328,9 @@ class TestApi
      */
     protected function insertEntityRecord($table_name, array $record)
     {
-        $date = new DateTime();
-        if ($this->getTimezone()) {
-            $date->setTimezone(new DateTimeZone($this->getTimezone()));
-        }
-        $record['_created'] = $record['_modified'] = $date->format('Y-m-d H:i:s');
+        // Modified is changed at the same time as created. (As opposed to when
+        // removing a profile.)
+        $record['_created'] = $record['_modified'] = $this->getDateTimeApiExpr();
         return $this->dbInsertRecord($table_name, $record);
     }
 
@@ -1328,12 +2356,7 @@ class TestApi
             // parameter. I'm not even sure of that because I'm not sure how
             // the PDO prepare()/bindValue() stuff exactly works. I guess
             // prepending 'xx' makes it safe enough.
-//            $param = 'xx' . str_replace('_', '', strtolower($key));
             $param = "xx$key";
-            // Add quotes. (Apparently double quotes are universally recognized
-            // in SQL to be quotes for identifiers, not literal values.) SQLite
-            // needs it for fields starting with an underscore.
-//            $fields[] = '"' . $key . '"';
             $fields[] = $key;
             $values[] = ":$param";
             $args[$param] = $value;
@@ -1347,89 +2370,68 @@ class TestApi
     }
 
     /**
-     * Updates a database record for an entity.
-     *
-     * @param string $table_name
-     *   The table name. Expected to be SQL safe.
-     * @param array $record
-     *   The record (field-value pairs), except _created and _modified fields
-     *   which are added by this method. Fields are expected to be SQL safe.
-     * @param string $key_field
-     *   They primary key field in the table.
-     * @param string $key_field_value
-     *   They primary key ID value to update.
-     *
-     * @return int
-     *   The number of affected rows.
-     */
-    protected function updateEntityRecord($table_name, array $record, $key_field, $key_field_value)
-    {
-        $date = new DateTime();
-        if ($this->getTimezone()) {
-            $date->setTimezone(new DateTimeZone($this->getTimezone()));
-        }
-        $record['_modified'] = $date->format('Y-m-d H:i:s');
-        return $this->dbUpdateRecord($table_name, $record, $key_field, $key_field_value);
-    }
-
-    /**
      * Updates a database record.
+     *
+     * This can also update multiple records if you 'cheat' and pass a
+     * non-'primary key' field / value pair.
      *
      * @param $table
      *   Table name. Expected to be SQL safe.
      * @param array $record
      *   The record (field-value pairs), except _modified field which is added
      *   by this method. Fields are expected to be SQL safe.
-     * @param string $key_field
-     *   They primary key field in the table.
-     * @param string $key_field_value
-     *   They primary key ID value to update.
+     * @param string $select_expression
+     *   A field in the table or an SQL clause containing PDO replacement
+     *   parameters (which could also be an empty string). Which one depends on
+     *   the type of the next method parameter. Expected to be SQL safe.
+     * @param string|array $pdo_parameters
+     *   Either the value used with the 'select field' to select record(s),
+     *   or an array of PDO replacement parameters.
      *
      * @return int
      *   The number of affected rows.
      */
-    protected function dbUpdateRecord($table, array $record, $key_field, $key_field_value)
+    protected function dbUpdateRecord($table, array $record, $select_expression, $pdo_parameters)
     {
-        $sets = [];
-        $args = [];
+        if (!is_array($pdo_parameters)) {
+            $pdo_parameters = ["xx$select_expression" => $pdo_parameters];
+            $select_expression = "$select_expression = :xx$select_expression";
+        }
+        if ($select_expression) {
+            $select_expression = " WHERE $select_expression";
+        }
+        $set_clauses = [];
         foreach ($record as $key => $value) {
             // Input parameters MAYBE should not be a substring of any other
             // parameter. I'm not even sure of that because I'm not sure how
             // the PDO prepare()/bindValue() stuff exactly works. I guess
             // prepending 'xx' makes it safe enough.
             $param = "xx$key";
-            $sets[] = "$key = :$param";
-            $args[$param] = $value;
+            $set_clauses[] = "$key = :$param";
+            $pdo_parameters[$param] = $value;
         }
-        $args["xx$key_field"] = $key_field_value;
-        $result = $this->dbExecuteQuery(
-            "UPDATE $table SET " . implode(', ', $sets) . " WHERE $key_field = :xx$key_field",
-            $args
+        return $this->dbExecuteQuery(
+            "UPDATE $table SET " . implode(', ', $set_clauses) . $select_expression,
+            $pdo_parameters
         );
-        // Return value can be 1 or 0 for number of updated rows. This
-        // check/log is arguably unneeded; we shouldn't need to second guess
-        // the number of affected rows.
-        $ret = ($result === 0 || $result === 1);
-        if (!$ret) {
-            throw new RuntimeException("Unexpected return value from update query: $result.");
-        }
-
-        return $result;
     }
 
     /**
-     * Retrieves field names from the database structure.
+     * Retrieves (lowercased) field names from the database structure.
      *
      * @param int $id
      *   Database ID or collectino ID
      * @param bool $for_collection
-     *   (Optional) if true, the ID is a database ID; collection ID otherwise.
+     *   (Optional) if true, the ID is a collection ID; database ID otherwise.
      * @param bool $names
-     *   (Optional) if true, return array of names. By default, return array
-     *   of field structures keyed by name.
+     *   (Optional) if true, return array of lowercased names (numerically
+     *   keyed). By default, return array of field structures keyed by
+     *   lowercased name (and the structure still has the un-lowercased 'name').
      *
      * @return array
-     *   Field names (zero or more, numerically keyed).
+     *   (Zero or more) fields/names, where the field names (either in key or
+     *   value) are lowercased. (In the former case, the 'name' property has
+     *   the same case as the actual field name.)
      */
     protected function getFields($id, $for_collection = false, $names = false)
     {
@@ -1444,7 +2446,7 @@ class TestApi
         if ($names) {
             return array_map(
                 function ($struct) {
-                    return $struct['name'];
+                    return strtolower($struct['name']);
                 },
                 $fields
             );
@@ -1453,7 +2455,7 @@ class TestApi
         $ret = [];
         foreach ($fields as $id => $struct) {
             $struct['ID'] = $id;
-            $ret[$struct['name']] = $struct;
+            $ret[strtolower($struct['name'])] = $struct;
         }
         return $ret;
     }
@@ -1658,7 +2660,7 @@ class TestApi
             if (isset($database['fields'])) {
                 $database['fields'] = $this->transformKeys($database['fields'], "field_$db_id", "field_name_$db_id");
                 foreach ($database['fields'] as &$field) {
-                    $this->normalizeFieldStructure($field);
+                    static::normalizeFieldStructure($field);
                 }
                 unset($field);
             }
@@ -1668,7 +2670,7 @@ class TestApi
                     if (isset($collection['fields'])) {
                         $collection['fields'] = $this->transformKeys($collection['fields'], "field_$db_id", "field_name_$db_id.$coll_id");
                         foreach ($database['fields'] as &$field) {
-                            $this->normalizeFieldStructure($field);
+                            static::normalizeFieldStructure($field);
                         }
                         unset($field);
                     }
@@ -1684,45 +2686,6 @@ class TestApi
     //   with the standard class. (Done for profile, profiles, subprofiles.)
 
     /**
-     * Checks and reformats the structure for a database/collection field.
-     *
-     * @param $field
-     *   The field structure. Passed by reference to be easier on the caller.
-     *   Checks for array-ness and ID/name are done elsewhere and are assumed
-     *   to be done already.
-     */
-    protected function normalizeFieldStructure(array &$field)
-    {
-        if (empty($field['type'])) {
-            throw new RuntimeException("Field has no 'type' set.");
-        }
-        if (!is_string($field['type']) || !isset($this->allowedFieldTypes[$field['type']])) {
-            throw new RuntimeException('Unknown field type ' . json_encode($field['type']) . '.');
-        }
-
-        if (in_array($field['type'], ['integer', 'float'], true)) {
-            if (!isset($field['value'])) {
-                throw new RuntimeException("Integer/float field has no 'value' set. Copernica requires this.");
-            }
-            $is_num = $field['type'] === 'float' ? is_numeric($field['value'])
-                : filter_var($field['value'], FILTER_VALIDATE_INT);
-            if ($is_num === false) {
-                throw new RuntimeException("Integer/float field has an illegal 'value' property.");
-            }
-        } elseif (isset($field['value']) && !is_string($field['value'])) {
-            throw new RuntimeException("{$field['type']} field has a non-string 'value' property.");
-        }
-        if (isset($field['value']) && is_int($field['value'])) {
-            // We don't know why, but Copernica always returns string values
-            // also for the default values for integer/float fields. If this
-            // becomes an issue internally (e.g. with populating field values)
-            // then we should amend the output for the 'databases' API call
-            // instead.
-            $field['value'] = (string)$field['value'];
-        }
-    }
-
-    /**
      * Checks whether data has/is a 'metadata wrapper', and removes it if so.
      *
      * @param array $structure
@@ -1735,8 +2698,10 @@ class TestApi
     {
         // Kind-of arbitrary: as per normalizeDatabasesStructure(), we assume
         // the entities can have alphanumeric keys in our case. So we'll only
-        // unwrap if we find exactly the 5 expected properties in metadata.
-        if (isset($structure['start']) && isset($structure['limit']) && isset($structure['count']) && isset($structure['total']) && isset($structure['data'])) {
+        // unwrap if we find exactly the expected properties in metadata.
+        // (We're not checking 'count' as that is not always there and we don't
+        // want to do more detailed logic.)
+        if (isset($structure['start']) && isset($structure['limit']) && isset($structure['total']) && isset($structure['data'])) {
             $structure = $structure['data'];
         }
     }
@@ -1917,7 +2882,6 @@ class TestApi
                 }
             }
 
-
             $previous_key = $key;
         }
 
@@ -2049,10 +3013,7 @@ class TestApi
                 // We'll need a table for profile id -> database mapping, if we
                 // don't want to look into each individual database's profile
                 // table to resolve calls like profile/$id/subprofiles.
-                // Same for subprofile -> collection mapping. We'll likely also
-                // use this for marking 'removed' (sub)profiles with DB 0.
-                // @todo before implementing that, re-test a DELETE statement for a profile and see if it
-                //   really does return 'removed' when we try to GET it afterwards.
+                // Same for subprofile -> collection mapping.
                 $this->pdoConnection->exec("CREATE TABLE profile_db (
                     profile_id  INTEGER PRIMARY KEY,
                     database_id INTEGER NOT NULL)");
@@ -2062,6 +3023,7 @@ class TestApi
                 // We don't need an index on db id; we have the database
                 // specific profile table for that.
 
+                $common_columns = '_secret TEXT NOT NULL, _created TEXT NOT NULL, _modified TEXT NOT NULL, _removed TEXT';
                 foreach ($this->databasesStructure as $db_id => $database) {
                     if (!empty($database['fields'])) {
                         // Create table for profiles.
@@ -2072,7 +3034,7 @@ class TestApi
                         // "_pid" is for the profile id. AUTOINCREMENT is
                         // likely necessary because of Copernica's 'removed'
                         // functionality.
-                        $this->pdoConnection->exec("CREATE TABLE profile_$db_id (_pid INTEGER PRIMARY KEY AUTOINCREMENT, _created TEXT, _modified TEXT, " . implode(', ', $fields) . ')');
+                        $this->pdoConnection->exec("CREATE TABLE profile_$db_id (_pid INTEGER PRIMARY KEY AUTOINCREMENT, " . implode(', ', $fields) . ", $common_columns)");
                     }
                     if (!empty($database['collections'])) {
                         foreach ($database['collections'] as $coll_id => $collection) {
@@ -2083,7 +3045,7 @@ class TestApi
                                     $fields[] = $this->getSqlFieldSpec($field);
                                 }
                                 // "_(s)pid" are for the (sub)profile id.
-                                $this->pdoConnection->exec("CREATE TABLE subprofile_$coll_id (_spid INTEGER PRIMARY KEY AUTOINCREMENT, _pid INTEGER NOT NULL, _created TEXT, _modified TEXT, " . implode(', ', $fields) . ')');
+                                $this->pdoConnection->exec("CREATE TABLE subprofile_$coll_id (_spid INTEGER PRIMARY KEY AUTOINCREMENT, _pid INTEGER NOT NULL, " . implode(', ', $fields) . ", $common_columns)");
                             }
                         }
                     }
@@ -2114,14 +3076,12 @@ class TestApi
      */
     protected function getSqlFieldSpec(array $field)
     {
-        // WARNING: if you change this, change $this->allowedFieldTypes.
+        // WARNING: if you change this, change static::$allowedFieldTypes.
         $field_type_map = [
             // Text fields are case insensitive by default; 'fix' that.
             // @todo check what we should do with default vs. not null. This depends on what we get back
             //   (from the real API) after we insert a profile _without_ these fields set. Test this - and all other
-            //   cases for default values - in a documented repeatable-on-live test.
-            // @todo test how the real API behaves with updating fields to '', updating fields to null.
-            //   Then implement that as tests and mark them as "documentation".
+            //   cases for default values - in ApiBehaviorTest.
             // TODO test what the real API does with text length restrictions, and emulate that
             //   (implement that as tests). Note SQLite does not have length restrictions by default.
             //   See CHECK CONSTRAINTS.
@@ -2133,7 +3093,6 @@ class TestApi
             //'phone' => 'TEXT COLLATE NOCASE',
             // Same for select, maybe, not sure yet.
             //'select' => 'TEXT COLLATE NOCASE',
-            // TODO also implement check constraints for integer (after testing real API behavior). And float.
             'integer' => 'INTEGER NOT NULL',
             'float' => 'REAL NOT NULL',
             // For dates it seems best to use TEXT - we'd use INTEGER
@@ -2142,7 +3101,8 @@ class TestApi
             // as we don't see that it does, storing the date as text
             // seems better. After all, that's how we get it in POST /
             // PUT requests.
-            // @TODO how to do date constraints for input (POST/PUT)? Make tests with failure cases.
+            'date' => 'TEXT NOT NULL',
+            'datetime' => 'TEXT NOT NULL',
             'empty_date' => 'TEXT',
             'empty_datetime' => 'TEXT',
         ];
@@ -2156,17 +3116,31 @@ class TestApi
         if (in_array($field['type'], ['integer', 'float'], true)) {
             // In Copernica, the default for integer/float is mandatory. We've
             // checked at construction.
+            // @todo is this actually true? Maybe it's only a UI thing that
+            //   seems to mandate this? I've seen an older live database where
+            //   the 'value' property for integer fields returned from a
+            //   database/ID call is "", not "0". I guess we'll only have the
+            //   need and the freedom to doublecheck this once we start messing
+            //   with database/ID/fields API calls, which is not a priority.
+            //   (An empty default seems to clash with below TODO though.)
             $spec .= ' DEFAULT ' . (empty($field['value']) ? 0 : $field['value']);
         } elseif (isset($field['value'])) {
-            // We've checked at construction these are all strings. For some
-            // mad reason, the '/databases' call returns '0' as value for all
-            // @TODO check this statement. It is apparently true for YG TEST db
-            //   but not for a C. live database I checked. If inconsistent, and
-            //   if I think it has effects, contect Copernica support to ask
-            //   what this is about. Encode this in tests that can be run on a
-            //   live db.
+            // We've checked at construction these are all strings.
             $spec .= " DEFAULT '{$field['value']}'";
         }
+        // @TODO if we add a numeric or date field (even a date field without
+        //   default value!) to a database with existing profiles: existing
+        //   records are updated to 0 or 0000-00-00 00:00:00. Notes:
+        //   - not to the new default; above happens also if the new field has
+        //     a non-0 default.
+        //   - It's not that the date fields stay empty in the database and are
+        //     converted to 0000-00-00 00:00:00 on output. (We can see that by
+        //     the fact that it happens for non-required fields, and that
+        //     nothing changes to existing dates if we remove 'requiredness'.)
+        //   If we implement REST calls for changing defaults, we need tests
+        //   to codify the above behavior. Though we should re-test before this
+        //   because it seems possible that this behavior (bug?) could be
+        //   changed by Copernica.
 
         return $spec;
     }
