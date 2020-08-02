@@ -2,6 +2,8 @@
 
 namespace CopernicaApi\Tests;
 
+use DateTime;
+use DateTimeZone;
 use PDO;
 use PHPUnit\Framework\TestCase;
 use UnexpectedValueException;
@@ -386,8 +388,8 @@ class TestApiTest extends TestCase
         $result = reset($result);
         // Account for possible race condition of the profile data being inserted
         // in the 'next' second.
-        $this->assertTrue($result['_created'] === date('Y-m-d H:i:s', $now)
-                          || $result['_created'] === date('Y-m-d H:i:s', $now + 1));
+        $this->assertTrue($result['_created'] === $this->getApiDate($api, $now)
+                          || $result['_created'] === $this->getApiDate($api, $now + 1));
         $this->assertEquals($result['_created'], $result['_modified']);
         $profile_created = $result['_created'];
         unset($result['_created'], $result['_modified']);
@@ -402,8 +404,8 @@ class TestApiTest extends TestCase
         $result = $api->dbFetchAll("SELECT * FROM profile_$database_id ORDER BY _pid", [], '');
         $this->assertEquals(2, count($result));
         $result = end($result);
-        $this->assertTrue($result['_created'] === date('Y-m-d H:i:s', $now)
-                          || $result['_created'] === date('Y-m-d H:i:s', $now + 1));
+        $this->assertTrue($result['_created'] === $this->getApiDate($api, $now)
+                          || $result['_created'] === $this->getApiDate($api, $now + 1));
         $this->assertEquals($result['_created'], $result['_modified']);
         $profile2_created = $result['_created'];
         unset($result['_created'], $result['_modified']);
@@ -416,8 +418,8 @@ class TestApiTest extends TestCase
         $result = $api->dbFetchAll("SELECT * FROM subprofile_$collection_id WHERE _spid = :id", [':id' => $subprofile_id], '');
         $this->assertEquals(1, count($result));
         $result = reset($result);
-        $this->assertTrue($result['_created'] === date('Y-m-d H:i:s', $now)
-                          || $result['_created'] === date('Y-m-d H:i:s', $now + 1));
+        $this->assertTrue($result['_created'] === $this->getApiDate($api, $now)
+                          || $result['_created'] === $this->getApiDate($api, $now + 1));
         $this->assertEquals($result['_created'], $result['_modified']);
         $subprofile_created = $result['_created'];
         unset($result['_created'], $result['_modified']);
@@ -596,5 +598,26 @@ class TestApiTest extends TestCase
             // $actual_struct is out of elements; $expected_struct is not.
             throw new UnexpectedValueException('Array structure has too few elements.');
         }
+    }
+
+    /**
+     * Gets date formatted as the API would.
+     *
+     * @param \CopernicaApi\Tests\TestApi $api
+     *   An API instance
+     * @param int $timestamp
+     *   Timestamp.
+     *
+     * @return string
+     *   Formatted date.
+     */
+    private function getApiDate(TestApi $api, $timestamp)
+    {
+        $date = new DateTime();
+        if ($api->getTimezone()) {
+            $date->setTimezone(new DateTimeZone($api->getTimezone()));
+        }
+        $date->setTimestamp($timestamp);
+        return $date->format('Y-m-d H:i:s');
     }
 }

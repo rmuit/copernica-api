@@ -187,7 +187,7 @@ class TestApi
         // _simulate_exception has variable 2nd/3rd component.
         if ($parts[0] === '_simulate_exception') {
             $this->checkUrlPartCount($resource, 2, 3);
-            $this->simulateException($parts[1], isset($parts[2]) ?$parts[2] : '', 'GET');
+            $this->simulateException($parts[1], isset($parts[2]) ? $parts[2] : '', 'GET');
         }
         // The majority of paths have a variable second component. So select
         // the first+third (until we need anything else).
