@@ -166,31 +166,13 @@ class CopernicaRestClient
     /**
      * Value to use for method argument / suppressApiCallErrors() as a bitmask:
      *
-     * Represents a HTTP PUT request resulting in a HTTP 303 "See other"
-     * response. https://www.copernica.com/en/documentation/restv2/rest-requests
-     * mentions it as one of very few HTTP response codes that could occur. So
-     * far we do not know when it happens or how it should best be handled.
-     * That likely depends on whether the caller needs the value of the
-     * 'Location:' header; currently, the only way for the caller to access it
-     * is likely to have this class throw an exception and then grab it from
-     * the exception message, which should contain the full headers and body.
-     * That's fairly ugly, so if the caller indeed needs the value, we should
-     * likely release a new version of the library with better support.
-     * Currently we're not sure if the caller even needs it, though. If not, it
-     * could use this constant to suppress the exception.
-     */
-    const PUT_RETURNS_SEE_OTHER = 4096;
-
-    /**
-     * Value to use for method argument / suppressApiCallErrors() as a bitmask:
-     *
      * Represents a HTTP PUT request resulting in a HTTP 400 "Bad request"
      * response. (This gets a separate constant to be able to suppress it,
      * because https://www.copernica.com/en/documentation/restv2/rest-requests
      * mentions it as one of very few HTTP response codes that could occur. The
      * application is unknown so far, though.)
      */
-    const PUT_RETURNS_BAD_REQUEST = 8192;
+    const PUT_RETURNS_BAD_REQUEST = 4096;
 
     /**
      * Value to use for method argument / suppressApiCallErrors() as a bitmask:
@@ -198,14 +180,14 @@ class CopernicaRestClient
      * Represents a HTTP PUT request resulting in any code lower than 200 or
      * higher than 299, except 303 and 400. Practical examples are unknown.
      */
-    const PUT_RETURNS_STRANGE_HTTP_CODE = 16384;
+    const PUT_RETURNS_STRANGE_HTTP_CODE = 8192;
 
     /**
      * Value to use for method argument / suppressApiCallErrors() as a bitmask:
      *
      * Represents a HTTP DELETE request resulting in a Curl error.
      */
-    const DELETE_RETURNS_CURL_ERROR = 32768;
+    const DELETE_RETURNS_CURL_ERROR = 16384;
 
     /**
      * Value to use for method argument / suppressApiCallErrors() as a bitmask:
@@ -216,7 +198,7 @@ class CopernicaRestClient
      * mentions it as one of very few HTTP response codes that could occur. The
      * application is unknown so far, though.)
      */
-    const DELETE_RETURNS_BAD_REQUEST = 65536;
+    const DELETE_RETURNS_BAD_REQUEST = 32768;
 
     /**
      * Value to use for method argument / suppressApiCallErrors() as a bitmask:
@@ -224,7 +206,7 @@ class CopernicaRestClient
      * Represents a HTTP DELETE request resulting in any code lower than 200 or
      * higher than 299, except 400. Practical examples are unknown.
      */
-    const DELETE_RETURNS_STRANGE_HTTP_CODE = 131072;
+    const DELETE_RETURNS_STRANGE_HTTP_CODE = 65536;
 
     /**
      * Indicates whether API calls may throw exceptions in error situations.
@@ -491,11 +473,14 @@ class CopernicaRestClient
         // from the exception message if needed.
         $api->throwOnError = true;
         try {
+            // This almost always returns a HTTP 303 "See other" with the URL
+            // for the entity we've just updated (but without the version part,
+            // at least for profiles - so we assume for other entities too). So
+            // 303s are hardcoded to never throw an exception and return true.
             $result = $api->put($resource, $data, $parameters);
         } catch (RuntimeException $e) {
             $code = $e->getCode();
             $suppress = ($code > 0 && $code < 100 && $suppress_errors & self::PUT_RETURNS_CURL_ERROR)
-                || ($code == 303 && $suppress_errors & self::PUT_RETURNS_SEE_OTHER)
                 || ($code == 400 && $suppress_errors & self::PUT_RETURNS_BAD_REQUEST)
                 || ((($code >= 100 && $code < 200) || ($code > 299 && !in_array($code, [303, 400])))
                     && $suppress_errors & self::PUT_RETURNS_STRANGE_HTTP_CODE);
