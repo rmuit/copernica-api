@@ -110,13 +110,6 @@ instead. Things to know:
     returned by default). If you run into cases where this is not OK: pass
     CopernicaRestClient::POST_RETURNS_NO_ID to the third argument of `post()`
     or set it using `suppressApiCallErrors()`.
-  - https://www.copernica.com/en/documentation/restv2/rest-requests mentions
-    that some PUT requests return a HTTP 303 "See other" response. However we
-    don't know what exactly should be done in that case. (Is it necessary for
-    the class to interpret the header, in order for any return value to be
-    useful? Should CopernicaRestApi be changed for that?) So until we know, we
-    throw an exception. If you are hit by this circumstance, please see the
-    code comments at PUT_RETURNS_SEE_OTHER for possible hints.
 
 Any time you hit an exception that you need to work around (by e.g. fiddling
 with these constants) but you think actually the class should handle this

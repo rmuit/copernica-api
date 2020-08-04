@@ -598,12 +598,13 @@ class TestApi
                 throw new RuntimeException("CURL returned code $code (\"Simulated error, description N/A\") for $method _simulate_exception/$type/$code. Response contents: \"\".", $code);
 
             case 'http':
+                $real_code = intval($code);
                 // Let's make sure to add a newline and a double quote inside
                 // the payload. We don't know much about payloads in errors
                 // though we've seen one response to a POST request contain a
                 // JSON body. It may not be desirable to send an "error" along
                 // with every HTTP code, but it'll do for now.
-                $payload = "{\"error\":\r\n{\"message\":\"Simulated message returned along with HTTP code $code.\"}}";
+                $payload = "{\"error\":\r\n{\"message\":\"Simulated message returned along with HTTP code $real_code.\"}}";
                 // post()/put() methods in CopernicaRestAPI add the headers to
                 // the value returned from Curl - that's just a hardcoded
                 // inconsistency (if we can call it that).
@@ -611,9 +612,22 @@ class TestApi
                     // Just fYI: HTTP 1.1 mandates \r\n between headers and
                     // before the body. The body itself (above) might contain
                     // anything; we just inserted the \r because we can.
-                    $payload = "X-Fake-Header: fakevalue\r\nX-Fake-Header2: fakevalue2\r\n\r\n$payload";
+                    $payload = "HTTP/1.1 $real_code No descriptive string\r\nX-Fake-Header: fakevalue\r\nX-Fake-Header2: fakevalue2\r\n\r\n$payload";
+                    if ($method === 'PUT') {
+                        // Compare with string, not int! (Don't match "303-X".)
+                        if ($code == '303') {
+                            // Regular 303 (where CopernicaRestClient throws no
+                            // excepition) has no body.
+                            $payload = "HTTP/1.1 $real_code No descriptive string\r\nLocation: https://my.domain/someentity/1\r\n\r\n";
+                        } elseif ($code === '303-nolocation') {
+                            // No location, also no body.
+                            $payload = "HTTP/1.1 $real_code No descriptive string\r\nX-Fake-Header: fakevalue\r\n\r\n";
+                        } elseif ($code === '303-withbody') {
+                            $payload = str_replace('X-Fake-Header2: fakevalue2', 'Location: https://my.domain/someentity/1', $payload);
+                        }
+                    }
                 }
-                throw new RuntimeException("$method _simulate_exception/$type/$code returned HTTP code $code. Response contents: \"$payload\".", $code);
+                throw new RuntimeException("$method _simulate_exception/$type/$code returned HTTP code $real_code. Response contents: \"$payload\".", $real_code);
 
             case 'invalid_json':
                 if ($code || $method !== 'GET') {

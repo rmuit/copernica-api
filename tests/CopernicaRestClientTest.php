@@ -81,7 +81,7 @@ class CopernicaRestClientTest extends TestCase
             $original_error_message = "Simulated message returned along with HTTP code $code.";
             return $full_message_including_method
                 ? "$full_message_including_method _simulate_exception/http/$code returned HTTP code $code. Response contents: \""
-                . "X-Fake-Header: fakevalue\r\nX-Fake-Header2: fakevalue2\r\n\r\n{\"error\":\r\n{\"message\":\"$original_error_message\"}}\"."
+                . "HTTP/1.1 $code No descriptive string\r\nX-Fake-Header: fakevalue\r\nX-Fake-Header2: fakevalue2\r\n\r\n{\"error\":\r\n{\"message\":\"$original_error_message\"}}\"."
                 : $original_error_message;
         };
 
@@ -103,6 +103,10 @@ class CopernicaRestClientTest extends TestCase
             // https://www.copernica.com/en/documentation/restv2/rest-requests
             // mentions 301 being possible for GET, 303 for PUT.
             foreach ([100, 301, 303, 400, 403, 404, 500, 503] as $code) {
+                if ($class_method === 'put' && $code === 303) {
+                    // This has special handling, will not throw an exception.
+                    continue;
+                }
                 // POST/PUT include headers and therefore throw exception with
                 // full message. Others get the message from the body.
                 $data[] = [$class_method, "_simulate_exception/http/$code", $code, $create_message(
@@ -118,10 +122,12 @@ class CopernicaRestClientTest extends TestCase
         $data[] = ['put', '_simulate_exception/http/400', 400, "PUT _simulate_exception/http/400 returned HTTP code 400. Response contents: \"", CopernicaRestClient::PUT_RETURNS_STRANGE_HTTP_CODE];
         $data[] = ['delete', '_simulate_exception/http/400', 400, 'Simulated message returned along with HTTP code 400.', CopernicaRestClient::DELETE_RETURNS_STRANGE_HTTP_CODE];
         $data[] = ['get', '_simulate_exception/http/400', 400, 'Simulated message returned along with HTTP code 400.', CopernicaRestClient::GET_RETURNS_STRANGE_HTTP_CODE];
-        // Neither is 303 for PUT; that also has its own specific suppression
-        // constant. (But it is for all other methods).
-        $data[] = ['put', '_simulate_exception/http/303', 303, "PUT _simulate_exception/http/303 returned HTTP code 303. Response contents: \"", CopernicaRestClient::PUT_RETURNS_STRANGE_HTTP_CODE];
-        $data[] = ['put', '_simulate_exception/http/303', 303, "PUT _simulate_exception/http/303 returned HTTP code 303. Response contents: \"", CopernicaRestClient::PUT_RETURNS_BAD_REQUEST];
+        // 303 for PUT usually does not throw an exception, but we emulate a
+        // subset of the strange circumstances that make
+        // checkResponseSeeOther() give up. Also, test that the exception is
+        // not suppressed by the regular constants. (It has its own.)
+        $data[] = ['put', '_simulate_exception/http/303-withbody', 303, "PUT _simulate_exception/http/303-withbody returned HTTP code 303. Response contents: \"", CopernicaRestClient::PUT_RETURNS_STRANGE_HTTP_CODE];
+        $data[] = ['put', '_simulate_exception/http/303-nolocation', 303, "PUT _simulate_exception/http/303-nolocation returned HTTP code 303. Response contents: \"", CopernicaRestClient::PUT_RETURNS_BAD_REQUEST];
 
         // There's one other exception in CopernicaRestApi: for invalid JSON.
         $data[] = ['get', '_simulate_exception/invalid_json', 0, 'Unexpected input: '];
@@ -200,7 +206,7 @@ class CopernicaRestClientTest extends TestCase
         $create_return_value = function ($code, $with_headers) {
             $payload = "{\"error\":\r\n{\"message\":\"Simulated message returned along with HTTP code $code.\"}}";
             if ($with_headers) {
-                $payload = "X-Fake-Header: fakevalue\r\nX-Fake-Header2: fakevalue2\r\n\r\n$payload";
+                $payload = "HTTP/1.1 $code No descriptive string\r\nX-Fake-Header: fakevalue\r\nX-Fake-Header2: fakevalue2\r\n\r\n$payload";
             }
             return $payload;
         };
@@ -223,7 +229,6 @@ class CopernicaRestClientTest extends TestCase
 
                 ['put', 100, CopernicaRestClient::PUT_RETURNS_STRANGE_HTTP_CODE, $create_return_value(100, true)],
                 ['put', 301, CopernicaRestClient::PUT_RETURNS_STRANGE_HTTP_CODE, $create_return_value(301, true)],
-                ['put', 303, CopernicaRestClient::PUT_RETURNS_SEE_OTHER, $create_return_value(303, true)],
                 ['put', 304, CopernicaRestClient::PUT_RETURNS_STRANGE_HTTP_CODE, $create_return_value(304, true)],
                 ['put', 400, CopernicaRestClient::PUT_RETURNS_BAD_REQUEST, $create_return_value(400, true)],
                 ['put', 403, CopernicaRestClient::PUT_RETURNS_STRANGE_HTTP_CODE, $create_return_value(403, true)],
@@ -255,6 +260,12 @@ class CopernicaRestClientTest extends TestCase
             list($class_method, $http_code, $constant, $expected_value) = $value;
             $run_tests($class_method, "_simulate_exception/http/$http_code", $constant, $expected_value);
         }
+        // Regular 303 never throws exception for PUT, because it's standard
+        // fare to return a 303. Non-regular 303s need suppressing.
+        $run_tests('put', '_simulate_exception/http/303', CopernicaRestClient::NONE, 'someentity/1');
+        $run_tests('put', '_simulate_exception/http/303-withbody', CopernicaRestClient::PUT_RETURNS_STRANGE_SEE_OTHER,
+          "HTTP/1.1 303 No descriptive string\r\nX-Fake-Header: fakevalue\r\nLocation: https://my.domain/someentity/1\r\n\r\n{\"error\":\r\n{\"message\":\"Simulated message returned along with HTTP code 303.\"}}");
+        $run_tests('put', '_simulate_exception/http/303-nolocation', CopernicaRestClient::PUT_RETURNS_STRANGE_SEE_OTHER, "HTTP/1.1 303 No descriptive string\r\nX-Fake-Header: fakevalue\r\n\r\n");
 
         $run_tests('get', '_simulate_exception/invalid_json', CopernicaRestClient::GET_RETURNS_INVALID_JSON, '["invalid_json}');
 

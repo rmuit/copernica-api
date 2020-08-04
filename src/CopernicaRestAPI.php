@@ -235,7 +235,7 @@ class CopernicaRestAPI
         curl_setopt_array($curl, $options);
 
         // execute the call
-        $answer = $this->curlExec($curl, $method, $resource, $method == "POST" ? [] : [303]);
+        $answer = $this->curlExec($curl, $method, $resource);
         
         // retrieve the HTTP status code
         $httpCode = curl_getinfo($curl, CURLINFO_HTTP_CODE);

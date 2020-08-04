@@ -166,13 +166,24 @@ class CopernicaRestClient
     /**
      * Value to use for method argument / suppressApiCallErrors() as a bitmask:
      *
+     * Represents a HTTP PUT request resulting in a HTTP 303 "See other"
+     * response with unexpected contents. This would be quite strange; please
+     * inspect the exception message vs. the code to see why this gets thrown
+     * (and decide whether you want to set this constant to get the full
+     * headers+body returned, instead of an exception thrown).
+     */
+    const PUT_RETURNS_STRANGE_SEE_OTHER = 4096;
+
+    /**
+     * Value to use for method argument / suppressApiCallErrors() as a bitmask:
+     *
      * Represents a HTTP PUT request resulting in a HTTP 400 "Bad request"
      * response. (This gets a separate constant to be able to suppress it,
      * because https://www.copernica.com/en/documentation/restv2/rest-requests
      * mentions it as one of very few HTTP response codes that could occur. The
      * application is unknown so far, though.)
      */
-    const PUT_RETURNS_BAD_REQUEST = 4096;
+    const PUT_RETURNS_BAD_REQUEST = 8192;
 
     /**
      * Value to use for method argument / suppressApiCallErrors() as a bitmask:
@@ -180,14 +191,14 @@ class CopernicaRestClient
      * Represents a HTTP PUT request resulting in any code lower than 200 or
      * higher than 299, except 303 and 400. Practical examples are unknown.
      */
-    const PUT_RETURNS_STRANGE_HTTP_CODE = 8192;
+    const PUT_RETURNS_STRANGE_HTTP_CODE = 16384;
 
     /**
      * Value to use for method argument / suppressApiCallErrors() as a bitmask:
      *
      * Represents a HTTP DELETE request resulting in a Curl error.
      */
-    const DELETE_RETURNS_CURL_ERROR = 16384;
+    const DELETE_RETURNS_CURL_ERROR = 32768;
 
     /**
      * Value to use for method argument / suppressApiCallErrors() as a bitmask:
@@ -198,7 +209,7 @@ class CopernicaRestClient
      * mentions it as one of very few HTTP response codes that could occur. The
      * application is unknown so far, though.)
      */
-    const DELETE_RETURNS_BAD_REQUEST = 32768;
+    const DELETE_RETURNS_BAD_REQUEST = 65536;
 
     /**
      * Value to use for method argument / suppressApiCallErrors() as a bitmask:
@@ -206,7 +217,7 @@ class CopernicaRestClient
      * Represents a HTTP DELETE request resulting in any code lower than 200 or
      * higher than 299, except 400. Practical examples are unknown.
      */
-    const DELETE_RETURNS_STRANGE_HTTP_CODE = 65536;
+    const DELETE_RETURNS_STRANGE_HTTP_CODE = 131072;
 
     /**
      * Indicates whether API calls may throw exceptions in error situations.
@@ -315,10 +326,10 @@ class CopernicaRestClient
      * response body, which happens to be the same as the return value from
      * get() / delete() - except for get() this means that if the body contains
      * JSON, it is not decoded. For post() and put(), this is concatenated
-     * headers and body, separated by "\r\n\r\n". Future version of this
+     * headers and body, separated by "\r\n\r\n". Future versions of this
      * library might have a different implementation; whenever these constants
-     * need to be used, a report is welcome because they are here "just to be
-     * sure".
+     * need to be used, a report is welcome (to possibly create a more stable
+     * solution), because they are here "just to be sure".
      *
      * In addition, sometimes the question of what constitutes a real error is
      * dependent on application logic. (Example: a deleted entity gets
@@ -357,26 +368,6 @@ class CopernicaRestClient
     /**
      * Executes a POST request.
      *
-     * Please note an imperfection in error handling: (See
-     * suppressApiCallErrors() for general remarks on why this method may start
-     * throwing more exceptions over time.)
-     *
-     * Our current default behavior is to throw a RuntimeException when the
-     * return value from CopernicaRestAPI::post() seems to indicate error (by
-     * being false), but not to do this when the return value is true. However,
-     * it is not at all unlikely that the CopernicaRestAPI class returns true
-     * instead, for some strange errors. (Because any HTTP codes higher than
-     * 400 likely return true; see the code: a HTTP response code other than
-     * 400 returns either an ID found in a header or true.)
-     *
-     * We do not (yet?) know the particulars of HTTP responses and how they
-     * vary over API calls, so this method cannot make assumptions (yet?) about
-     * what a return value of true means. But callers which are sure they need
-     * to have an ID returned instead, are encouraged to pass 0/NONE as the
-     * third argument, or to set this (unset POST_RETURNS_NO_ID) globally
-     * through suppressApiCallErrors(), so that calls are guaranteed to either
-     * return an ID of throw an exception.
-     *
      * @param string $resource
      *   Resource (URI relative to the versioned API) to send data to.
      * @param array $data
@@ -389,11 +380,13 @@ class CopernicaRestClient
      * @return mixed
      *   ID of created entity, or simply true/false to indicate success/failure.
      *   (This description comes from CopernicaRestAPI but it seems doubtful
-     *   that true actually indicates success for most cases though. False is
-     *   only returned for nonstandard $suppress_errors values.)
+     *   that true actually indicates success for most cases though. False
+     *   would only be returned for a combination of a non-default
+     *   $suppress_errors value and an exception with an unexpected message.
      *
      * @throws \RuntimeException
-     *   If the wrapped class returns False.
+     *   If any Curl error, nonstandard HTTP response code or unexpected
+     *   response headers are encountered.
      *
      * @see CopernicaRestClient::suppressApiCallErrors()
      */
@@ -413,6 +406,7 @@ class CopernicaRestClient
         // from the exception message if needed.
         $api->throwOnError = true;
         try {
+            // This never returns false (because of throwOnError).
             $result = $api->post($resource, $data);
         } catch (RuntimeException $e) {
             $code = $e->getCode();
@@ -434,11 +428,6 @@ class CopernicaRestClient
     /**
      * Executes a PUT request.
      *
-     * This code may start throwing more exceptions over time (unless a
-     * relevant value is passed in the $suppress_errors argument / set globally
-     * through suppressApiCallErrors(). See comments at suppressApiCallErrors()
-     * for more information.)
-     *
      * @param string $resource
      *   Resource (URI relative to the versioned API) to send data to.
      * @param array $data
@@ -452,13 +441,15 @@ class CopernicaRestClient
      *   suppressApiCallErrors().
      *
      * @return mixed
-     *   ID of created entity, or simply true/false to indicate success/failure.
-     *   (This description comes from CopernicaRestAPI but we're not sure of
-     *   any PUT request returning an ID yet. False is only returned for
-     *   nonstandard $suppress_errors values.)
+     *   Very likely the location (URI relative to the versioned API) of the
+     *   entity that was just updated, but we're not sure. Could also just be
+     *   True, or... maybe... some newly created entity? False would only be
+     *   returned for a combination of a non-default $suppress_errors value and
+     *   an exception with an unexpected message.
      *
      * @throws \RuntimeException
-     *   If the wrapped class returns False.
+     *   If any Curl error, nonstandard HTTP response code or unexpected
+     *   response headers are encountered.
      *
      * @see CopernicaRestClient::suppressApiCallErrors()
      */
@@ -473,14 +464,36 @@ class CopernicaRestClient
         // from the exception message if needed.
         $api->throwOnError = true;
         try {
-            // This almost always returns a HTTP 303 "See other" with the URL
-            // for the entity we've just updated (but without the version part,
-            // at least for profiles - so we assume for other entities too). So
-            // 303s are hardcoded to never throw an exception and return true.
+            // This never returns false (because of throwOnError). As far as we
+            // could tell, it always throws an exception with code 303 (because
+            // the HTTP response is a 303 "See other") and the "Location"
+            // header contains the entity we've just updated. So
+            // https://www.copernica.com/en/documentation/restv2/rest-requests
+            // is incomplete in mentioning "will create a new entity, in which
+            // case a "303 See Other" code will refer you to the new entity" -
+            // because a 303 is returned for non-new entities too.
             $result = $api->put($resource, $data, $parameters);
         } catch (RuntimeException $e) {
             $code = $e->getCode();
+            if ($code == 303) {
+                // CopernicaRestAPI::put() would return true. Let's instead
+                // return the contents of the Location header - the caller can
+                // treat it as a 'boolean' measure of success, but could also
+                // inspect the value to see if it references a new entity.
+                // (There is no sense / advantage in throwing an exception
+                // instead, if the URI of the entity is not the same as the one
+                // we just updated. Which we very much don't expect, but which
+                // theoretically could be true if we look at the code of
+                // CopernicaRestAPI::sendDate() and/or the URL mentioned above.)
+                $return = $this->checkResponseSeeOther($e, $resource);
+                // $return is either the location header or false if we really
+                // don't recognize the contents of the 303.
+                if ($return !== false) {
+                    return $return;
+                }
+            }
             $suppress = ($code > 0 && $code < 100 && $suppress_errors & self::PUT_RETURNS_CURL_ERROR)
+                || ($code == 303 && $suppress_errors & self::PUT_RETURNS_STRANGE_SEE_OTHER)
                 || ($code == 400 && $suppress_errors & self::PUT_RETURNS_BAD_REQUEST)
                 || ((($code >= 100 && $code < 200) || ($code > 299 && !in_array($code, [303, 400])))
                     && $suppress_errors & self::PUT_RETURNS_STRANGE_HTTP_CODE);
@@ -488,20 +501,16 @@ class CopernicaRestClient
         }
 
         // Unlike post(), we don't make assumptions about what kind of value
-        // this returns. It's likely always true. (Because we assume no PUT
-        // request responds with an "X-Created" header... on the other hand,
-        // why would that "X-Created" code be inside sendData() rather than
-        // post()?) But even if it's not - we're not bothered.
+        // this returns. (Likely we never get here because an exception is
+        // always thrown with code 303, and a value is returned from inside the
+        // 'catch' block. Incidentally, that mechanism is a sign that we should
+        // really pull code from CopernicaRestAPI into here to make the flow
+        // more logical. Which we'll do... sometime later. For now, it works.)
         return $result;
     }
 
     /**
      * Executes a DELETE request.
-     *
-     * This code may start throwing more exceptions over time (unless a
-     * relevant value is passed in the $suppress_errors argument / set globally
-     * through suppressApiCallErrors(). See comments at suppressApiCallErrors()
-     * for more information.)
      *
      * @param string $resource
      *   Resource (URI relative to the versioned API).
@@ -929,6 +938,136 @@ class CopernicaRestClient
         if (isset($state['version'])) {
             $this->version = $state['version'];
         }
+    }
+
+
+    /**
+     * Interprets an exception with code 303, thrown in put().
+     *
+     * Separated out only to keep put() code a bit small. This logic is
+     * specific to one situation.
+     *
+     * @param \RuntimeException $e
+     *   The exception, which is assumed to be of code 303 and contain full
+     *   headers + body whose contents can/should be checked strictly.
+     * @param string $resource
+     *   Resource (URI relative to the versioned API) that was called.
+     *
+     * @return string
+     *   The 'path' part of the "Location" header without trailing slash (i.e.
+     *   no hostname or query).
+     */
+    private function checkResponseSeeOther(RuntimeException $exception, $resource)
+    {
+        // Any reason to return false is not going to be specified; we assume
+        // it will result in the exception being thrown as-is, so the caller
+        // can/will need to figure things out.
+        $response = preg_match('/Response contents: \"(.*)\"\./s', $exception->getMessage(), $matches);
+        if (!$response) {
+            return false;
+        }
+        list($headers, $body) = $this->extractHeadersAndBody($matches[1]);
+        // The body should be empty, otherwise we want to pass it (throw it) to
+        // the caller for info. We're not absolutely sure if a stray newline
+        // could be present - haven't tested / read the precise HTTP specs.
+        if (trim($body)) {
+            return false;
+        }
+        // We want to only have this called for 303.
+        if (!preg_match('/^HTTP\/[\d\.]+ 303/', $headers[0])) {
+            return false;
+        }
+        if (!isset($headers['location']) || is_array($headers['location'])) {
+            return false;
+        }
+        // The 'token' argument is in the query and we don't need it. If
+        // there's another argument, that means 1) somehow a 'canonical entity
+        // URI' needs an argument, which would be quite strange - or 2) an API
+        // change introduced another 'unneeded' argument just like token. In
+        // this instance, we won't be strict - and we'll just ignore the query.
+        // The path is including slash but excluding the API version. (Which is
+        // apparently also a working URL - just one that is never used by
+        // the API client class because it always inserts a version in paths.)
+        // As per the comment in the caller, let's not check if the location
+        // matches the original resource URL.
+        $path = ltrim(parse_url($headers['location'], PHP_URL_PATH), '/');
+        // We'd be surprised if a new entity was created as the result of a PUT
+        // request, but both the remarks about creating new entities in
+        // https://www.copernica.com/en/documentation/restv2/rest-requests and
+        // the code of CopernicaRestAPI::sendData() suggest it may be possible.
+        // So let's doublecheck it. According to sendData() it only consists of
+        // digits. If it's equal to the last part of the location, we consider
+        // it duplicate info we can discard. If it's different... that's so
+        // strange we'll let the caller figure things out.
+        if (
+            isset($headers['X-Created'])
+            && substr($path, -strlen($headers['X-Created'])) != $headers['X-Created']
+        ) {
+          return false;
+        }
+        return $path;
+    }
+
+    /**
+     * Extracts headers and body from an API response.
+     *
+     * This helper function is only needed because we don't have access to the
+     * Curl handle anymore.
+     *
+     * @param string $response
+     *   The response with headers and body concatenated, which we get from
+     *   some Curl calls.
+     *
+     * @return array
+     *   Two-element array: headers (array), body (string).
+     */
+    private function extractHeadersAndBody($response)
+    {
+        list($headers, $body) = explode("\r\n\r\n", $response, 2);
+
+        return [$this->parseHeaders($headers), $body];
+    }
+
+    /**
+     * Parses string with headers. Stackoverflow copy-paste-modify.
+     *
+     * @param string $raw_headers
+     *    Headers.
+     *
+     * @return array
+     *    Headers as key-value pairs, with headers lowercased.
+     */
+    private function parseHeaders($raw_headers)
+    {
+        $headers = array();
+        $previous_header = '';
+
+        foreach (explode("\n", $raw_headers) as $header) {
+            $h = explode(':', $header, 2);
+
+            if (isset($h[1])) {
+                $name = strtolower($h[0]);
+                $value = trim($h[1]);
+                if (!isset($headers[$name])) {
+                    $headers[$name] = $value;
+                } elseif (is_array($headers[$name])) {
+                    $headers[$name] = array_merge($headers[$name], array($value));
+                } else {
+                    $headers[$name] = array_merge(array($headers[$name]), array($value));
+                }
+
+                $previous_header = $name;
+            } elseif (substr($header, 0, 1) === "\t") {
+                // Continue previous header.
+                $headers[$previous_header] .= "\r\n\t" . trim($header);
+            } else {
+                // This _should_ only occur for the first line (HTTP) which
+                // will be stored as key 0.
+                $headers[] = trim($header);
+            }
+        }
+
+        return $headers;
     }
 
     /**
