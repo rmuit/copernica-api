@@ -10,7 +10,7 @@ use PHPUnit\Framework\TestCase;
  * Tests for the CopernicaRestClient class.
  *
  * This should still:
- * - test getEntity() for removed entity (throwing exceptino & suppressing)
+ * - test getEntity() for removed entity (throwing exception & suppressing)
  * - Simulate errors in getEntities() to check checkEntitiesMetadata logic.
  *   (By implementing _simulate_strange_response for incomplete entities data)
  * - test 'paging' in getEntities/nextBatch/lastDatasetIsComplete().
@@ -27,10 +27,10 @@ use PHPUnit\Framework\TestCase;
  *
  * These tests are coded to use specific functionality in TestApi.
  *
- * This class implicitly depends on TestApiTest, in the sense that we can only
- * trust its results fully if we know that TestApi behaves flawlessly. (We have
- * not created a phpunit.xml specifically to encode this dependency/order
- * because it's unlikely this will cause issues.)
+ * This class implicitly depends on TestApiBaseTest + ApiBehaviorTest, in the
+ * sense that we can only trust its results fully if we know that TestApi
+ * behaves flawlessly. (We have not created a phpunit.xml specifically to
+ * encode this dependency/order because it's unlikely this will cause issues.)
  *
  * Anything that smells like it's testing 'logic / behavior of the API' should
  * likely be in ApiBehaviorTest.
@@ -110,8 +110,15 @@ class CopernicaRestClientTest extends TestCase
                     // This has special handling; exception, will always be
                     // intercepted by CopernicaRestClient.
                     continue;
+                } elseif ($class_method === 'delete' && $code === 400) {
+                    // 400 for DELETE is handled by 2 different constants.
+                    // Check that suppressing one value does not prevent
+                    // throwing the exceptino for the other situation.
+                    $data[] = [$class_method, "_simulate_exception/http/$code", $code, $create_message($code), CopernicaRestClient::DELETE_RETURNS_ALREADY_REMOVED];
+                    $data[] = [$class_method, "_simulate_exception/http/$code-alreadyremoved", $code, 'Copernica API request failed: FAKE-ENTITY has already been removed', CopernicaRestClient::DELETE_RETURNS_BAD_REQUEST];
+                } else {
+                    $data[] = [$class_method, "_simulate_exception/http/$code", $code, $create_message($code)];
                 }
-                $data[] = [$class_method, "_simulate_exception/http/$code", $code, $create_message($code)];
             }
             // "Invalid access token" is just another 400 error for the live
             // API, but our checkResultForError() implemented a special code;
@@ -139,14 +146,9 @@ class CopernicaRestClientTest extends TestCase
         // data that should make CopernicaRestClient throw one:
 
         // post() returning both false and true. Note that
-        // - post() getting false from CopernicaRestApi::post() is impossible
-        //   when $throwOnError is true, so we shouldn't even need to test
-        //   _simulate_strange_response/false (because CopernicaRestClient
-        //   always sets $throwOnError=true).
         // - post() getting true is something we need to test, because it's
         //   supposed to only return an ID by default. put() can return true as
-        //   well as an ID (as well as false), we don't care.
-        $data[] = ['post', '_simulate_strange_response/false', 803, "Response to POST _simulate_strange_response/false request returned no 'X-Created: ID' header. Details are unavailable."];
+        //   well as an ID, we don't care.
         $data[] = ['post', '_simulate_strange_response/true', 803, "Response to POST _simulate_strange_response/true request returned no 'X-Created: ID' header. Details are unavailable."];
 
         $data[] = ['get', '_simulate_strange_response/non-array', 0, 'Response body is not a JSON encoded array: "'];
@@ -232,6 +234,12 @@ class CopernicaRestClientTest extends TestCase
 
                 ['put', 100, CopernicaRestClient::PUT_RETURNS_STRANGE_HTTP_CODE, $create_return_value(100, true)],
                 ['put', 301, CopernicaRestClient::PUT_RETURNS_STRANGE_HTTP_CODE, $create_return_value(301, true)],
+                // Regular 303 never throws exception for PUT, because it's
+                // standard to return a 303. (It's regular return value is an
+                // entity's relative URL.) Non-regular 303s need suppressing.
+                ['put', 303, CopernicaRestClient::NONE, 'someentity/1'],
+                ['put', '303-withbody', CopernicaRestClient::PUT_RETURNS_STRANGE_SEE_OTHER, "HTTP/1.1 303 See Other (Not Really)\r\nLocation: https://test.test/someentity/1\r\n\r\n{\"error\":\r\n{\"message\":\"Simulated message returned along with HTTP code 303.\"}}"],
+                ['put', '303-nolocation', CopernicaRestClient::PUT_RETURNS_STRANGE_SEE_OTHER, "HTTP/1.1 303 See Other (Not Really)\r\nX-Fake-Header: fakevalue\r\n\r\n"],
                 ['put', 304, CopernicaRestClient::PUT_RETURNS_STRANGE_HTTP_CODE, $create_return_value(304, true)],
                 ['put', 400, CopernicaRestClient::PUT_RETURNS_BAD_REQUEST, $create_return_value(400, true)],
                 ['put', 403, CopernicaRestClient::PUT_RETURNS_STRANGE_HTTP_CODE, $create_return_value(403, true)],
@@ -243,7 +251,10 @@ class CopernicaRestClientTest extends TestCase
                 ['delete', 301, CopernicaRestClient::DELETE_RETURNS_STRANGE_HTTP_CODE, $create_return_value(301, true)],
                 ['delete', 303, CopernicaRestClient::DELETE_RETURNS_STRANGE_HTTP_CODE, $create_return_value(303, true)],
                 ['delete', 304, CopernicaRestClient::DELETE_RETURNS_STRANGE_HTTP_CODE, $create_return_value(304, true)],
+                // DELETE HTTP 400 is handled by either of 2 constants,
+                // depending on the exception message.
                 ['delete', 400, CopernicaRestClient::DELETE_RETURNS_BAD_REQUEST, $create_return_value(400, true)],
+                ['delete', '400-alreadyremoved', CopernicaRestClient::DELETE_RETURNS_ALREADY_REMOVED, "HTTP/1.1 400 No descriptive string\r\nX-Fake-Header: fakevalue\r\n\r\n{\"error\":\r\n{\"message\":\"FAKE-ENTITY has already been removed\"}}"],
                 ['delete', 403, CopernicaRestClient::DELETE_RETURNS_STRANGE_HTTP_CODE, $create_return_value(403, true)],
                 ['delete', 404, CopernicaRestClient::DELETE_RETURNS_STRANGE_HTTP_CODE, $create_return_value(404, true)],
                 ['delete', 500, CopernicaRestClient::DELETE_RETURNS_STRANGE_HTTP_CODE, $create_return_value(500, true)],
@@ -263,22 +274,11 @@ class CopernicaRestClientTest extends TestCase
             list($class_method, $http_code, $constant, $expected_value) = $value;
             $run_tests($class_method, "_simulate_exception/http/$http_code", $constant, $expected_value);
         }
-        // Regular 303 never throws exception for PUT, because it's standard
-        // fare to return a 303. Non-regular 303s need suppressing.
-        $run_tests('put', '_simulate_exception/http/303', CopernicaRestClient::NONE, 'someentity/1');
-        $run_tests('put', '_simulate_exception/http/303-withbody', CopernicaRestClient::PUT_RETURNS_STRANGE_SEE_OTHER, "HTTP/1.1 303 No descriptive string\r\nX-Fake-Header: fakevalue\r\nLocation: https://test.test/someentity/1\r\n\r\n{\"error\":\r\n{\"message\":\"Simulated message returned along with HTTP code 303.\"}}");
-        $run_tests('put', '_simulate_exception/http/303-nolocation', CopernicaRestClient::PUT_RETURNS_STRANGE_SEE_OTHER, "HTTP/1.1 303 No descriptive string\r\nX-Fake-Header: fakevalue\r\n\r\n");
 
         $run_tests('get', '_simulate_exception/invalid_json', CopernicaRestClient::GET_RETURNS_INVALID_JSON, '["invalid_json}');
 
         // Cases 2 and 3 as per the phpdoc:
-        $run_tests('post', '_simulate_strange_response/false', CopernicaRestClient::POST_RETURNS_NO_ID, false);
         $run_tests('post', '_simulate_strange_response/true', CopernicaRestClient::POST_RETURNS_NO_ID, true);
-        // Return value of false throws exception for post() because "No ID",
-        // but put() has no such check. See also: the above 'exceptions' tests.
-        // Fot delete(), we don't even have a fake endpoint to test because we
-        // just assume it will never throw an exception.
-        $run_tests('put', '_simulate_strange_response/false', CopernicaRestClient::NONE, false);
 
         $run_tests('get', '_simulate_strange_response/non-array', CopernicaRestClient::GET_RETURNS_NON_ARRAY, 'This is not a json decoded body.');
     }

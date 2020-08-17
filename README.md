@@ -1,15 +1,6 @@
 Copernica REST API PHP tools [![Build Status](https://travis-ci.com/rmuit/sharpspring-restapi.svg?branch=master)](https://travis-ci.com/rmuit/copernica-api)
 ============================
 
-**Please note:** The CopernicaRestClient has already changed its interface since
-the 1.0 release. While it is expected to be stable, we'll wait a little while
-before tagging a 2.0 version. (There are TODOs in the code for some likely
-speed improvements, and we want to be sure we don't need to break compatibility
-in order to support them.) In the meantime, using master is recommended over
-v1.0.
-
---
-
 This builds on the CopernicaRestAPI class which Copernica offer for download,
 and adds an API Client class containing some useful helper methods to work
 more smoothly with returned data.
@@ -106,31 +97,40 @@ instead. Things to know:
   `suppressApiCallErrors()`. The same values can also be passed as an argument
   to individual calls.
 
+- If an error is suppressed that was caused by a non-2XX HTTP code being
+  returned, the post() / put() / delete() calls return the full headers and
+  body returned in the HTTP response, so the caller can figure out what to do
+  with it. get() calls return only the body.
+
 - Whether some responses are 'invalid', may depend on the specific application,
   like:
   - By default an exception is thrown if a single entity is queried (e.g.
-    `getEntity("profile/$id")`) which has been removed in the meantime. However,
-    the API actually returns an entity with the correct ID, all fields empty,
-    and a 'removed' property with a date value. If this empty entity should be
+    `getEntity("profile/$id")`) which was deleted earlier. However, the API
+    actually returns an entity with the correct ID, all fields empty, and a
+    'removed' property with a date value. If this empty entity should be
     returned without throwing an exception: see above example code.
+  - By default an exception is thrown if we try to re-delete an entity which
+    was deleted earlier. This exception can be suppressed by passing
+    CopernicaRestClient::DELETE_RETURNS_ALREADY_REMOVED to the third argument
+    of `delete()` or setting it using `suppressApiCallErrors()`. In this case,
+    the `delete()` call will return the full headers and body (including the
+    JSON encoded error message). The value can be ignored and the fact that the
+    call returns normally can be treated as 'success'.
 
 - Some API endpoints behave in unknown ways. CopernicaRestClient throws
   exceptions by default for unknown behavior; the intention is to never return
-  a value to the caller if it can't be sure how to treat that value. This may
-  however result in exceptions being thrown for 'valid' responses. Possible
-  examples:
-  - The standard CopernicaRestApi seems to suggest that not all responses to
-    POST requests contain an "X-Created" header containing the ID of a newly
-    created entity. We don't know of such cases, so until now, this situation
-    will cause an exception (so the caller is sure it gets an actual ID
-    returned by default). If you run into cases where this is not OK: pass
+  a value to the caller if it can't be sure how to treat that value. This might
+  however cause exceptions for 'valid' responses. Possible examples:
+  - The standard CopernicaRestApi code seems to suggest that not all responses
+    to POST requests contain an "X-Created" header containing the ID of a newly
+    created entity. At the moment, the absence of this header will cause an
+    exception (so the caller can be sure it gets an actual ID returned by
+    default). If you run into cases where this is not OK: pass
     CopernicaRestClient::POST_RETURNS_NO_ID to the third argument of `post()`
-    or set it using `suppressApiCallErrors()`.
-
-- If an encountered error is suppressed, the post() / put() calls will return
-  the full headers and body returned by the HTTP request (if applicable), so
-  the caller can figure out what to do with it. get() calls will return only
-  the body.
+    or set it using `suppressApiCallErrors()`. (We know of some calls which do
+    this, but they are undocumented POST equivalents of PUT calls. We should
+    really be using the documented PUT calls - so we don't mind that these
+    throw exceptions.)
 
 Any time you hit an exception that you need to work around (by e.g. fiddling
 with these constants) but you think actually the class should handle this
@@ -196,9 +196,8 @@ The approach does have disadvantages, though:
     contain the full response body in order for CopernicaRestClient to access
     it.
   - At the moment it is impossible to for CopernicaRestClient to get to the
-    headers of responses to GET/DELETE requests, because they are not inside
-    exception messages. (We'd have to change the code for that, but that
-    results in a behavior change.)
+    headers of responses to GET requests, because they are not inside exception
+    messages.
 
 It's likely that the next step in the evolution of this code will be to bite
 the bullet and get rid of CopernicaRestAPI / make it only a very thin layer
@@ -333,8 +332,8 @@ the copernica-api-php project and retiring this one.
 
 ### Contributing
 
-If you submit a PR and it's small - tell me explicitly if you don't want me to
-rebase it / want to keep using you own repository as-is. (If a project is slow
+If you submit a PR and it's small: tell me explicitly if you don't want me to
+rebase it / want to keep using your own repository as-is. (If a project is slow
 moving and the PR changes are not too big, I tend to want to 'merge --rebase'
 PR's if I can't fast-forward them, to keep the git history uncomplicated for
 both me and yourself. But that does mean you're forced to change the commit

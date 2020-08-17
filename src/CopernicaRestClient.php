@@ -99,7 +99,7 @@ class CopernicaRestClient
      * default, an exception will be thrown, specifying the accompanying error
      * message. While we're not sure (for lack of specs), this is expected to
      * never happen because we expect error messages to only be returned
-     * along with a response code of 400; these are governed by
+     * along with a response code of 400; these are covered by
      * GET_RETURNS_BAD_REQUEST.
      */
     const GET_RETURNS_ERROR_MESSAGE = 32;
@@ -201,11 +201,21 @@ class CopernicaRestClient
      * Value to use for method argument / suppressApiCallErrors() as a bitmask:
      *
      * Represents a HTTP GET request resulting in a HTTP 400 "Bad request"
-     * response, which happens with (almost?) all errors returned from the API.
-     * If these errors are suppressed, delete() returns the full response
-     * headers plus body, separated by double CR/LF.
+     * response containing a "this <entity> has already been removed" message.
+     * (We are left to interpret the error message because this does not have
+     * its own error message - so we just hope we're covering all cases.) If
+     * these errors are suppressed, delete() returns the full response headers
+     * plus body, separated by double CR/LF.
      */
-    const DELETE_RETURNS_BAD_REQUEST = 65536;
+    const DELETE_RETURNS_ALREADY_REMOVED = 65536;
+
+    /**
+     * Value to use for method argument / suppressApiCallErrors() as a bitmask:
+     *
+     * Represents a HTTP DELETE request resulting in a HTTP 400 "Bad request"
+     * response which is not covered by DELETE_RETURNS_ALREADY_REMOVED.
+     */
+    const DELETE_RETURNS_BAD_REQUEST = 131072;
 
     /**
      * Value to use for method argument / suppressApiCallErrors() as a bitmask:
@@ -213,7 +223,7 @@ class CopernicaRestClient
      * Represents a HTTP DELETE request resulting in any code lower than 200 or
      * higher than 299, except 400. Practical examples are unknown.
      */
-    const DELETE_RETURNS_STRANGE_HTTP_CODE = 131072;
+    const DELETE_RETURNS_STRANGE_HTTP_CODE = 262144;
 
     /**
      * Indicates whether API calls may throw exceptions in error situations.
@@ -370,8 +380,7 @@ class CopernicaRestClient
      *   (Optional) data to send.
      * @param int|null $suppress_errors
      *   (Optional) suppress throwing exceptions for certain cases; see
-     *   suppressApiCallErrors(). It is recommended to pass 0, for any caller
-     *   which knows that's safe; see method comments.
+     *   suppressApiCallErrors().
      *
      * @return mixed
      *   ID of created entity, or simply true to indicate success (if no
@@ -489,7 +498,7 @@ class CopernicaRestClient
                 // we just updated. Which we very much don't expect, but which
                 // theoretically could be true if we look at the code of
                 // CopernicaRestAPI::sendDate() and/or the URL mentioned above.)
-                $return = $this->checkResponseSeeOther($e, $resource);
+                $return = $this->checkResponseSeeOther($e);
                 // $return is either the location header or false if we really
                 // don't recognize the contents of the 303.
                 if ($return !== false) {
@@ -520,21 +529,20 @@ class CopernicaRestClient
      *   Resource (URI relative to the versioned API).
      * @param int|null $suppress_errors
      *   (Optional) suppress throwing exceptions for certain cases; see
-     *   suppressApiCallErrors(). This parameter has no effect but may have in
-     *   the future (in the sense that setting it to a relevant value will
-     *   prevent exceptions from starting to be thrown in the future).
+     *   suppressApiCallErrors(). Pass self::DELETE_RETURNS_ALREADY_REMOVED
+     *   if re-deleting an already deleted entity should not throw an exception.
      *
-     * @return bool
-     *   ? @todo check
+     * @return mixed
+     *   True to indicate success. If errors were encountered which are
+     *   suppressed: either a string containing the full response headers and
+     *   body, or false if an suppressed exception has an unrecognized message
+     *   (which we hope is impossible).
      *
      * @throws \RuntimeException
      *   If any non-supressed Curl error, nonstandard HTTP response code or
      *   unexpected response headers are encountered.
      *
      * @see CopernicaRestClient::suppressApiCallErrors()
-     *
-     * @todo Implement handling of HTTP 204, check "X-deleted" header. See
-     *   https://www.copernica.com/en/documentation/restv2/rest-requests.
      */
     public function delete($resource, $suppress_errors = null)
     {
@@ -543,23 +551,33 @@ class CopernicaRestClient
         }
 
         $api = $this->getApiConnection();
-        // Make the API class throw exceptions. We can extract the body from
-        // the exception message if needed; the headers are not included but
-        // we don't know of an application that needs it. (Successful DELETE
-        // requests apparently have a "X-deleted" header, but we can live
-        // without doublechecking that.)
+        // Make the API class throw exceptions. We can extract the headers/body
+        // from the exception message if needed.
         $api->throwOnError = true;
         try {
             $result = $api->delete($resource);
         } catch (RuntimeException $e) {
             $code = $e->getCode();
+            $already_removed = $code == 400 && $this->errorIsAlreadyRemoved($e);
             $suppress = ($code > 0 && $code < 100 && $suppress_errors & self::DELETE_RETURNS_CURL_ERROR)
-                || ($code == 400 && $suppress_errors & self::DELETE_RETURNS_BAD_REQUEST)
+                || ($code == 400 && $already_removed && $suppress_errors & self::DELETE_RETURNS_ALREADY_REMOVED)
+                || ($code == 400 && !$already_removed && $suppress_errors & self::DELETE_RETURNS_BAD_REQUEST)
                 || ((($code >= 100 && $code < 200) || ($code > 299 && $code != 400))
                     && $suppress_errors & self::DELETE_RETURNS_STRANGE_HTTP_CODE);
             return $this->throwOrSuppress($e, $suppress);
         }
 
+        // https://www.copernica.com/en/documentation/restv2/rest-requests
+        // mentions:
+        // - A "X-deleted" header. This is indeed present on responses (which
+        //   return HTTP code 200) for just-deleted items, and has content
+        //   "ENTITY-TYPE ID" in the case we've checked. I'm not sure this adds
+        //   any information (i.e. would ever not be equivalent to $resource).
+        // - A "204 No Content" response in case the data that was meant to be
+        //   deleted could not be located. I'm not aware of when this would
+        //   apply: trying to delete an already-deleted (or nonexistent)
+        //   profile results in a HTTP 400 response. So either this happens
+        //   only for specific entities, or it's a remnant of v1 documentation.
         return $result;
     }
 
@@ -976,9 +994,8 @@ class CopernicaRestClient
     /**
      * Throw exception or return value contained in exception message.
      *
-     * Just some code abstracted so we don't need to duplicate it. What we
-     * exactly return or throw still needs to be determined. This is explicitly
-     * meant to only handle specific circumstances; see the code comments.
+     * Just some code abstracted so we don't need to duplicate it. This is only
+     * meant to handle specific circumstances; see the code comments.
      *
      * @param \RuntimeException $exception
      *   An exception that was thrown.
@@ -1000,33 +1017,20 @@ class CopernicaRestClient
      */
     private function throwOrSuppress(RuntimeException $exception, $suppress)
     {
-        // This should always match. Assume first-to-last double quote matches
-        // correctly.
-        $return = preg_match('/Response contents: \"(.*)\"\./s', $exception->getMessage(), $matches);
-        if ($return) {
-            // Suppress exception; return original response contents.
-            $return = $matches[1];
-        }
+        $return = $this->extractResponse($exception, true);
         if ($suppress) {
-            // We'll want to either return the response contents that was
+            // We'll want to either return the response contents that were
             // extracted from the message, or false (because in the latter case
-            // we want to distinguish the return value from values returned by
-            // a non-error path), which means the exact exception is obscured.
-            // (In other words, we can only use this from places that never
-            // throw miscellaneous exceptions.)
-            return $return;
+            // the caller will want to distinguish the return value from values
+            // returned by a non-error path), which means the exact exception
+            // is obscured. (In other words, we can only use this from places
+            // that never throw miscellaneous exceptions.)
+            return isset($return['full']) ? $return['full'] : false;
         }
-
-        // The message is fairly generic. If the body itself contains a
-        // Copernica-standard JSON 'error structure', return just the
-        // message contained in it.
-        $return = explode("\r\n\r\n", $return, 2);
-        $body = isset($return[1]) ? $return[1] : $return[0];
-        $return = json_decode($body, true);
-        if (is_array($return)) {
+        if (isset($return['body']) && is_array($return['body'])) {
             // Supposedly this return value would have an "error" component. If
             // so, re-throw the exception with, possibly, a designated code.
-            $this->checkResultForError($return, $exception->getCode());
+            $this->checkResultForError($return['body'], $exception->getCode());
         }
 
         // Ignore $return; throw the original message (including the response).
@@ -1042,29 +1046,27 @@ class CopernicaRestClient
      * @param \RuntimeException $exception
      *   The exception, which is assumed to be of code 303 and contain full
      *   headers + body whose contents can/should be checked strictly.
-     * @param string $resource
-     *   Resource (URI relative to the versioned API) that was called.
      *
      * @return string
      *   The 'path' part of the "Location" header without trailing slash (i.e.
      *   no hostname or query).
      */
-    private function checkResponseSeeOther(RuntimeException $exception, $resource)
+    private function checkResponseSeeOther(RuntimeException $exception)
     {
         // Any reason to return false is not going to be specified; we assume
         // it will result in the exception being thrown as-is, so the caller
         // can/will need to figure things out.
-        $response = preg_match('/Response contents: \"(.*)\"\./s', $exception->getMessage(), $matches);
+        $response = $this->extractResponse($exception, false, true);
         if (!$response) {
             return false;
         }
-        list($headers, $body) = $this->extractHeadersAndBody($matches[1]);
         // The body should be empty, otherwise we want to pass it (throw it) to
         // the caller for info. We're not absolutely sure if a stray newline
         // could be present - haven't tested / read the precise HTTP specs.
-        if (trim($body)) {
+        if (trim($response['body'])) {
             return false;
         }
+        $headers = $response['headers'];
         // We want to only have this called for 303.
         if (!preg_match('/^HTTP\/[\d\.]+ 303/', $headers[0])) {
             return false;
@@ -1101,23 +1103,44 @@ class CopernicaRestClient
     }
 
     /**
-     * Extracts headers and body from an API response.
+     * Extracts API response / headers and body from an exception message.
      *
      * This helper function is only needed because we don't have access to the
      * Curl handle anymore.
      *
-     * @param string $response
+     * @param \RuntimeException $exception
      *   The response with headers and body concatenated, which we get from
-     *   some Curl calls.
+     *   some Curl calls.*
+     * @param bool $json_decode_body
+     *   (Optional) JSON-decode the body.
+     * @param bool $return_headers
+     *   (Optional) return headers.
      *
-     * @return array
-     *   Two-element array: headers (array), body (string).
+     * @return array|false
+     *   False if the exception message is not as we expected. Otherwise an
+     *   array with 'full' (string), 'body' (optionally JSON-decoded), and
+     *   optionally 'headers' (array with lowercase header names as keys;
+     *   header contents as values).
      */
-    private function extractHeadersAndBody($response)
+    private function extractResponse(RuntimeException $exception, $json_decode_body = false, $return_headers = false)
     {
-        list($headers, $body) = explode("\r\n\r\n", $response, 2);
+        // This should always match. Assume first-to-last double quote matches
+        // correctly.
+        $return = preg_match('/Response contents: \"(.*)\"\./s', $exception->getMessage(), $matches);
+        if ($return) {
+            $return = ['full' => $matches[1]];
+            if ($return['full']) {
+                $parts = explode("\r\n\r\n", $return['full'], 2);
+                // We assume headers may have been omitted.
+                $body = isset($parts[1]) ? $parts[1] : $parts[0];
+                $return['body'] = $json_decode_body ? json_decode($body, true) : $body;
+                if ($return_headers && isset($parts[1])) {
+                    $return['headers'] = $this->parseHeaders($parts[0]);
+                }
+            }
+        }
 
-        return [$this->parseHeaders($headers), $body];
+        return $return;
     }
 
     /**
@@ -1225,6 +1248,36 @@ class CopernicaRestClient
         } elseif ($struct['count'] !== $struct['limit']) {
             throw new RuntimeException("Unexpected structure in response from Copernica API: 'count' value (" . json_encode($struct['count']) . ") is not equal to 'limit' (" . json_encode($struct['limit']) . '), which should be the case when we only fetched part of the result.', 804);
         }
+    }
+
+    /**
+     * Checks if an exception contains an "already removed" message.
+     *
+     * @param \RuntimeException $exception
+     *   The exception.
+     *
+     * @return bool
+     *   True if the exception contains an "already removed" message.
+     */
+    protected function errorIsAlreadyRemoved(RuntimeException $exception)
+    {
+        $return = $this->extractResponse($exception, true);
+        if ($return) {
+            $return = isset($return['body']['error']['message'])
+                && is_string($return['body']['error']['message'])
+                // Here's where we just need to hope there's no other exotic
+                // error message we'd want to match. The only ones we've seen
+                // so far are ("This <entity> has already been removed" for
+                // profile & subprofile. The rest are 'just to be sure'.
+                && (
+                    strpos($return['body']['error']['message'], ' has already been removed')
+                    || strpos($return['body']['error']['message'], ' has already been deleted')
+                    || strpos($return['body']['error']['message'], 's already removed')
+                    || strpos($return['body']['error']['message'], 's already deleted')
+                );
+        }
+
+        return $return;
     }
 
     /**

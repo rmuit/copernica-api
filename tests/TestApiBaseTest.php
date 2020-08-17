@@ -11,12 +11,14 @@ use RuntimeException;
 use UnexpectedValueException;
 
 /**
- * Tests for the TestApi class.
+ * Base tests for the TestApi class.
  *
  * What has test coverage at the moment:
+ * - Logic in TestApi::normalizeInputValue()
  * - Logic in TestApi::normalizeDatabasesStructure() and its called methods.
- * - The database backend re. profiles and subprofiles (data is written
- *   correctly by POST/PUT/DELETE, and returned correctly by GET).
+ * - The database backend re. profiles and subprofiles: only the basic parts
+ *   sufficient for establishing that data is stored correctly, are covered in
+ *   this class.
  *
  * Of all the test classes in this directory, this is the 'base' test. It does
  * not use other classes (like CopernicaRestClient); it tests whether TestApi
@@ -34,7 +36,7 @@ use UnexpectedValueException;
  * certain things in ApiBehaviorTest so we're not duplicating code, in which
  * we should be clear about that in comments.)
  */
-class TestApiTest extends TestCase
+class TestApiBaseTest extends TestCase
 {
     /**
      * Tests 'normalization' of input values to values we want to store.
@@ -57,10 +59,27 @@ class TestApiTest extends TestCase
     {
         // We don't use 'value' but it's mandatory for integers/floats.
         $field_struct = ['type' => $destination_field_type, 'value' => '-3'];
-        $value = TestApi::normalizeInputValue($input_value, $field_struct);
         if (is_array($expected_value)) {
-            $this->assertTrue(in_array($value, $expected_value, true));
+            // This is expected to be a date expression + format. We need to
+            // convert it at the last minute because
+            // - The expression may contain dynamic components that convert to
+            //   the current second; (see data provider;)
+            // - The data providers are apparently executed before all tests,
+            //   and our tests take several seconds to execute.
+            // The below is basically a copy of normalizeInputValue() :-/
+            $tz_obj = new DateTimeZone(TestApi::TIMEZONE_DEFAULT);
+            $date = new DateTime($expected_value[0], $tz_obj);
+            $date->setTimezone($tz_obj);
+
+            $date2 = new DateTime();
+            $date2->setTimezone($tz_obj);
+            $date2->setTimestamp($date->getTimestamp() + 1);
+            $expected_value = [$date->format($expected_value[1]), $date2->format($expected_value[1])];
+
+            $value = TestApi::normalizeInputValue($input_value, $field_struct);
+            $this->assertTrue(in_array($value, $expected_value, true), "$value is not among expected values " . implode(', ', $expected_value));
         } else {
+            $value = TestApi::normalizeInputValue($input_value, $field_struct);
             $this->assertSame($expected_value, $value);
         }
     }
@@ -201,27 +220,13 @@ class TestApiTest extends TestCase
                 }
                 $data[] = [$type, $input_output[0], $input_output[1]];
             }
-        }
-        foreach ($dates2 as $input_output) {
-            $expected_output = isset($input_output[1]) ? $input_output[1] : $input_output[0];
-            // Convert the output in the context of the API timezone. So far,
-            // this data provider assumes TestApi::TIMEZONE_DEFAULT because
-            // that's what the test does. The below is basically a copy of
-            // normalizeInputValue() :-/
-            $tz_obj = new DateTimeZone(TestApi::TIMEZONE_DEFAULT);
-            $date = new DateTime($expected_output, $tz_obj);
-            $date->setTimezone($tz_obj);
 
-            $date2 = new DateTime();
-            $date2->setTimezone($tz_obj);
-            $date2->setTimestamp($date->getTimestamp() + 1);
-
-
-
-            $data[] = ['date', $input_output[0], [$date->format('Y-m-d'), $date2->format('Y-m-d')]];
-            $data[] = ['empty_date', $input_output[0], [$date->format('Y-m-d'), $date2->format('Y-m-d')]];
-            $data[] = ['datetime', $input_output[0], [$date->format('Y-m-d H:i:s'), $date2->format('Y-m-d H:i:s')]];
-            $data[] = ['empty_datetime', $input_output[0], [$date->format('Y-m-d H:i:s'), $date2->format('Y-m-d H:i:s')]];
+            $format = substr($type, -4) === 'date' ? 'Y-m-d' : 'Y-m-d H:i:s';
+            foreach ($dates2 as $input_output) {
+                $expected_output = isset($input_output[1]) ? $input_output[1] : $input_output[0];
+                // Do last-minute conversion of date in the test itself.
+                $data[] = [$type, $input_output[0], [$expected_output, $format]];
+            }
         }
 
         return $data;
@@ -511,20 +516,28 @@ class TestApiTest extends TestCase
      * To repeat the class comments: this test's purpose is to guarantee
      * TestApi specific behavior, i.e. its backend treats/stores data correctly.
      *
+     * This may amount to testing (almost) only post() here, because:
+     * - After we establish the backend contents are OK, we can test all
+     *   details of GET return values in ApiBehaviorTest, which enables us to
+     *   also check that logic against the live API.
+     * - After we know post() and get() are fine, we can test (almost?) all
+     *   'general' put()/delete() functionality by testing put()/delete() vs
+     *   get(). And it's likely that all those are 'behavior' tests which we'd
+     *   also want to check against the live API.
+     *
      * Most read/get() functionality and some post()/put()/delete() details are
-     * not tested in this class; as long as we establish the backend contents
-     * are OK, we can test more of their all details of GET return values in
-     * ApiBehaviorTest, which enables us to also check that logic against the
-     * live API. (Doing get() here wouldn't add that much because the test code
-     * is just the reverse of the array construction code in e.g.
-     * TestApi::getProfiles().)
+     * not tested in this class; (Doing
+     * get() here wouldn't add that much because the test code is just the
+     * reverse of the array construction code in e.g. TestApi::getProfiles().)
+     * Some put() code may still be tested here; on the other hand, if we
+     * already pu
      *
      * Similar tests might be implemented in CopernicaRestClientTest but their
      * purpose would only be to exercise CopernicaRestClient logic - likely to
      * test specific error situations... so they have an implicit dependency on
      * this test / on TestApi working flawlessly.
      */
-    public function testProfileCrud()
+    public function testProfileCrudBasics()
     {
         $api = new TestApi([
             'Test' => [
@@ -562,17 +575,17 @@ class TestApiTest extends TestCase
         // created/modified dates.
         $this->assertNotEmpty($profile_id);
         $result = $api->dbFetchAll("SELECT * FROM profile_$database_id WHERE _pid = :id", [':id' => $profile_id], '');
-        $this->assertEquals(1, count($result));
+        $this->assertSame(1, count($result));
         $result = reset($result);
         // Account for possible race condition of the profile data being inserted
         // in the 'next' second.
         $this->assertTrue($result['_created'] === $this->getApiDate($api, $now)
             || $result['_created'] === $this->getApiDate($api, $now + 1));
-        $this->assertEquals($result['_created'], $result['_modified']);
+        $this->assertSame($result['_created'], $result['_modified']);
         $this->assertNull($result['_removed']);
         $profile_created = $result['_created'];
         unset($result['_secret'], $result['_created'], $result['_modified'], $result['_removed']);
-        $this->assertEquals($profile + ['_pid' => $profile_id], $result);
+        $this->assertSame(['_pid' => $profile_id] + $profile, $result);
 
         // Inserting a second profile will result in a second row, also if the
         // profile is the same.
@@ -581,86 +594,67 @@ class TestApiTest extends TestCase
         $this->assertGreaterThan($profile_id, $profile2_id);
         // We assume that our database was empty at the start of this test.
         $result = $api->dbFetchAll("SELECT * FROM profile_$database_id ORDER BY _pid", [], '');
-        $this->assertEquals(2, count($result));
+        $this->assertSame(2, count($result));
         $result = end($result);
         $this->assertTrue($result['_created'] === $this->getApiDate($api, $now)
             || $result['_created'] === $this->getApiDate($api, $now + 1));
-        $this->assertEquals($result['_created'], $result['_modified']);
+        $this->assertSame($result['_created'], $result['_modified']);
         $this->assertNull($result['_removed']);
-        $profile2_created = $result['_created'];
         unset($result['_secret'], $result['_created'], $result['_modified'], $result['_removed']);
-        $this->assertEquals($profile + ['_pid' => $profile2_id], $result);
+        $this->assertSame(['_pid' => $profile2_id] + $profile, $result);
 
         // Insert subprofile.
         $subprofile = ['Score' => 6, 'ActionTime' => '2020-04-27 14:15:34'];
         $subprofile_id = $api->post("profile/$profile_id/subprofiles/$collection_id", $subprofile);
         $this->assertNotEmpty($subprofile_id);
         $result = $api->dbFetchAll("SELECT * FROM subprofile_$collection_id WHERE _spid = :id", [':id' => $subprofile_id], '');
-        $this->assertEquals(1, count($result));
+        $this->assertSame(1, count($result));
         $result = reset($result);
         $this->assertTrue($result['_created'] === $this->getApiDate($api, $now)
             || $result['_created'] === $this->getApiDate($api, $now + 1));
-        $this->assertEquals($result['_created'], $result['_modified']);
+        $this->assertSame($result['_created'], $result['_modified']);
         $this->assertNull($result['_removed']);
-        $subprofile_created = $result['_created'];
         unset($result['_secret'], $result['_created'], $result['_modified'], $result['_removed']);
-        $this->assertEquals($subprofile + ['_spid' => $subprofile_id, '_pid' => $profile_id], $result);
+        // Score gets returned as string.  The expected-value manipulation gets
+        // a bit weird for assertSame (because it is strict about element
+        // ordering) but it's still doable.
+        $subprofile['Score'] = '6';
+        $this->assertSame(['_spid' => $subprofile_id, '_pid' => $profile_id] + $subprofile, $result);
+
+        // Even the following PUT requests might be duplicate with
+        // ApiBehaviorTest...
 
         // Update a field to empty. Sleep 1 to be able to check modified time.
         sleep(1);
-        $this->executePut($api, "profile/$profile_id/fields", ['LastName' => '']);
+        $result = $this->executePut($api, "profile/$profile_id/fields", ['LastName' => '']);
+        $this->assertSame("profile/$profile_id", $result);
         // Still two profiles, i.e. nothing was magically duplicated.
         $result = $api->dbFetchAll("SELECT * FROM profile_$database_id ORDER BY _pid", [], '');
-        $this->assertEquals(2, count($result));
+        $this->assertSame(2, count($result));
         $result = reset($result);
-        $this->assertNotEquals($profile_created, $result['_modified'], 'Profile modified time did not change.');
+        $this->assertNotSame($profile_created, $result['_modified'], 'Profile modified time did not change.');
         $this->assertNull($result['_removed']);
-        $profile_modified = $result['_modified'];
         unset($result['_secret'], $result['_created'], $result['_modified'], $result['_removed']);
-        $this->assertEquals(['_pid' => $profile_id, 'LastName' => ''] + $profile, $result);
+        $profile['LastName'] = '';
+        $this->assertSame(['_pid' => $profile_id] + $profile, $result);
 
         // We should test the exact format of accepted fields in
         // ApiBehaviorTest / we know SQLite does a TEXT field for dates, so
         // there's nothing special about that here.
-        $this->executePut($api, "subprofile/$subprofile_id/fields", ['Score' => 0]);
+        $result = $this->executePut($api, "subprofile/$subprofile_id/fields", ['Score' => 0]);
+        $this->assertSame("subprofile/$subprofile_id", $result);
         // See there's still only one subprofile.
         $result = $api->dbFetchAll("SELECT * FROM subprofile_$collection_id", [], '');
         $result = reset($result);
-        $this->assertNotEquals($profile_created, $result['_modified'], 'Profile modified time did not change.');
+        $this->assertNotSame($profile_created, $result['_modified'], 'Profile modified time did not change.');
         $this->assertNull($result['_removed']);
-        $subprofile_modified = $result['_modified'];
         unset($result['_secret'], $result['_created'], $result['_modified'], $result['_removed']);
-        $this->assertEquals(['Score' => 0, '_spid' => $subprofile_id, '_pid' => $profile_id] + $subprofile, $result);
-
-
-        // @TODO return value for deleted (s)p
-        // @todo check what happens when you delete nonexistent (s)p
-
-        // @TODO check what happens when you re-delete a (s)p <- according to below "is fine/returns true". What answer does it give?
-        // -> The second deletion of a profile returns a 400 - but the Client doesn't see that because Api just returns true.
-
-        // @TODO IMPLEMENT: PUT of subprofile/XX works fine. Updates _modified. Still does not return anything on GET.
-        // -> also try/implement tests for subprofile/XX/fields and for profile.)
-
-
-        // @TODO test how deletion of a profile with subprofiles works <- note that this smells like a logic test though, which should be moved into the other class later.
-        // -> The second deletion of a profile returns a 400 - but the Client doesn't see that because Api just returns true.
-        // -> first try "first deletion" on live. Then fix this.
-
-        //  -> subprofiles are auto deleted. Repeated deletion of a profile is fine / returns true.
-        //  -> it is possible in the UI to create new subprofiles! (If you haven't refreshed yet.)
-        //     They will show up in the subprofile list for a collection. Haven't tried per-profile yet.
-        //     -> yes that works too. They show up in subprofile list for the collection.
-        // listing for the (deleted)profile gives "error" body with message: "Invalid request, element 3 is missing in 'directory' path"
-
-
-        // @todo note that this is a behavior test that should really be moved into the other test class.
+        $subprofile['Score'] = '0';
+        $this->assertSame(['_spid' => $subprofile_id, '_pid' => $profile_id] + $subprofile, $result);
     }
-    // @todo more tests for profile behavior that should end up in the new test:
-    //   - deleting (sub)profile does not change 'modified' date.
 
     /**
-     * Executes put(), catches 303.
+     * Executes put(), catches 303, checks that we get "Location:" in message.
      *
      * This is a standalone method because most/all code behind TestApi::put()
      * is supposed to behave differently from get()/post(): it is supposed to
@@ -668,10 +662,38 @@ class TestApiTest extends TestCase
      *
      * We can get away with executing most (all?) put() calls twice, so we'll
      * do this to make sure they behave well for both throwOnError states.
+     *
+     * @param \CopernicaApi\CopernicaRestAPI|\CopernicaApi\Tests\TestApi $api
+     *   An API instance.
+     * @param string $resource
+     *   Resource (URI relative to the versioned API) to send data to.
+     * @param array $data
+     *   Data to send.
+     * @param array $parameters
+     *   (Optional) parameters for the API query. (This parameter is taken over
+     *   from CopernicaRestAPI but it is unclear which PUT requests need
+     *   parameters, at the time of writing this method.)
+     * @param bool $execute_twice
+     *  (Optional) False to execute the call only once, and not execute it with
+     *  throwError=False.
+     *
+     * @return string|true
+     *   The relative path in the 'Location:' header returned in the header
+     *   (through the exception message).
      */
     private function executePut(TestApi $api, $resource, $data, array $parameters = array(), $execute_twice = true)
     {
         $old_throw_state = $api->throwOnError;
+
+        // To introduce some more randomness, sometimes switch order of
+        // execution of both calls - since a second put() may not behave
+        // exactly the same as the first.
+        if ($execute_twice && rand(0, 1)) {
+            $api->throwOnError = false;
+            $this->assertSame(true, $api->put($resource, $data, $parameters));
+            // Don't execute the above again.
+            $execute_twice = false;
+        }
 
         $api->throwOnError = true;
         try {
@@ -682,6 +704,8 @@ class TestApiTest extends TestCase
             if ($code !== 303) {
                 throw $exception;
             }
+            $return = preg_match('|^Location:\s*?http(?:s)?://[^/]+/(\S+)|m', $exception->getMessage(), $matches)
+                ? $matches[1] : true;
         }
 
         if ($execute_twice) {
@@ -690,6 +714,8 @@ class TestApiTest extends TestCase
         }
 
         $api->throwOnError = $old_throw_state;
+
+        return $return;
     }
 
     /**

@@ -35,23 +35,14 @@ use RuntimeException;
  * this test class is the 'most canonical' source of truth re. API behavior
  * now, which we use as a specification. (But which might change over time.)
  *
- * Code wise, it might be cleanest if this didn't use CopernicaRestClient
- * but just ran directly against CopernicaRestAPI / TestApi. However there is
- * no problem with using CopernicaRestClient in places it is more convenient
- * because:
- * - This class conceptually 'depends on' TestApiTest & CopernicaRestClientTest
- *   and we should be able to treat CopernicaRestClient as working flawlessly.
- *   (Nothing officially encodes this dependency yet...)
- * - The likely future of the code is for logic to move from CopernicaRestAPI
- *   into CopernicaRestClient anyway (thereby simplifying e.g. all that error
- *   handling which is semi-arbitrarily separated into two classes now).
- *
- * We can mostly test with the API class' $throwOnError == True because
- * it yields more precise results than False. (We have one base test with False
- * which should be enough because we never use that for serious code.) In cases
- * where handling exceptions is more tedious than we like, we could either set
- * throwOnError=false or use CopernicaRestClient to handle the exceptions. The
- * latter is supposedly more future proof.
+ * Dependency wise, it would be cleanest if this didn't use CopernicaRestClient
+ * but just ran directly against CopernicaRestAPI / TestApi. (That means that
+ * this class can contain tests which form a base for CopernicaRestClientTest,
+ * which can depend on the combination of TestApiBaseTest + this class being
+ * OK. This would be good for never having to duplicate tests between e.g.
+ * TestApiBaseTest::testProfileCrudBasics() and testProfileCrud(). If it really
+ * becomes much easier to use CopernicaRestAPI in this class, we may need to
+ * rethink this. But it looks like that isn't necessary.)
  *
  * @todo
  *   - The "intended purpose" means we should not initialize a database
@@ -100,8 +91,8 @@ class ApiBehaviorTest extends TestCase
         $api->invalidToken = true;
 
         $this->assertFalse($api->post('databases'));
-        $this->assertFalse($api->post('interest'));
-        $this->assertFalse($api->post('interest'));
+        $this->assertFalse($api->put('interest', []));
+        $this->assertTrue($api->delete('interest'));
         $this->assertEquals(['error' => ['message' => 'Invalid access token']], $api->get('databases'));
     }
 
@@ -195,19 +186,19 @@ class ApiBehaviorTest extends TestCase
                 ['get', 'database', "/$database_id", 'collections', 'fields', 'interests', 'profileids', 'profiles', 'views', 'unsubcribe'],
                 ['post', 'database', "/$database_id", 'collections', 'copy', 'field', 'fields', 'intentions', 'interests', 'profiles', 'views', 'unsubcribe'],
                 ['put', 'database', "/$database_id", 'collections', 'field', 'fields', 'intentions', 'interests', 'profiles', 'views', 'unsubcribe'],
-//                ['delete', 'database', "/$database_id", 'collections', 'field', 'fields', 'intentions', 'interests', 'profiles', 'views', 'unsubcribe'],
+                ['delete', 'database', "/$database_id", 'collections', 'field', 'fields', 'intentions', 'interests', 'profiles', 'views', 'unsubcribe'],
                 ['get', 'collection', "/$collection_id", 'fields', 'miniviews', 'subprofileids', 'subprofiles', 'unsubcribe'],
                 ['post', 'collection', "/$collection_id", 'field', 'fields', 'intentions', 'miniviews', 'unsubcribe'],
                 ['put', 'collection', "/$collection_id", 'field', 'fields', 'intentions', 'miniviews', 'unsubcribe'],
-//                ['delete', 'collection', "/$collection_id", 'field', 'fields', 'intentions', 'miniviews', 'unsubcribe'],
+                ['delete', 'collection', "/$collection_id", 'field', 'fields', 'intentions', 'miniviews', 'unsubcribe'],
                 ['get', 'profile', "/$profile_id", 'datarequest', 'fields', 'files', 'interests', 'ms/destinations', 'ms/emailings', 'publisher/destinations', 'publisher/emailings', 'subprofiles'],
                 ['post', 'profile', "/$profile_id", 'datarequest', 'fields', 'interests', 'subprofiles'],
                 ['put', 'profile', "/$profile_id", 'datarequest', 'fields', 'interests', 'subprofiles'],
-//                ['delete', 'profile', "/$profile_id", 'datarequest', 'fields', 'interests', 'subprofiles'],
+                ['delete', 'profile', "/$profile_id", 'datarequest', 'fields', 'interests', 'subprofiles'],
                 ['get', 'subprofile', "/$subprofile_id", 'datarequest', 'fields', 'ms/destinations', 'ms/emailings', 'publisher/destinations', 'publisher/emailings'],
                 ['post', 'subprofile', "/$subprofile_id", 'datarequest', 'fields'],
                 ['put', 'subprofile', "/$subprofile_id", 'datarequest', 'fields'],
-//                ['delete', 'subprofile', "/$subprofile_id", 'datarequest', 'fields'],
+                ['delete', 'subprofile', "/$subprofile_id", 'datarequest', 'fields'],
                 // database/ID/field/INVALID & profile/ID/subprofiles/INVALID
                 // have differing messages/behavior; we check them elsewhere.
                 // @todo implement database/ID/field/INVALID elsewhere.
@@ -247,7 +238,7 @@ class ApiBehaviorTest extends TestCase
                 ['put', "database/$database_id", $database_id, 'profileids', 'profile', 'subprofiles'],
                 // fields/views = GET/POST, interests = GET/POST,
                 // profiles = GET/POST/PUT, unsubscribe = GET/PUT
-//                ['delete', "database/$database_id", $database_id, 'copy', 'fields', 'interests', 'profileids', 'profiles', 'unsubscribe', 'views'],
+                ['delete', "database/$database_id", $database_id, 'copy', 'fields', 'interests', 'profileids', 'profiles', 'unsubscribe', 'views'],
 
                 // field/X = PUT/DELETE, intentions = PUT
                 ['get', "collection/$collection_id", $collection_id, 'field', 'intentions'],
@@ -255,7 +246,7 @@ class ApiBehaviorTest extends TestCase
                 ['post', "collection/$collection_id", $collection_id, 'subprofileids', 'subprofiles'],
                 ['put', "collection/$collection_id", $collection_id, 'subprofileids', 'subprofiles'],
                 // fields/miniviews = GET/POST, unsubscribe = GET/PUT
-//                ['delete', "collection/$collection_id", $collection_id, 'fields', 'intentions', 'miniviews', 'subprofileids', 'subprofiles', 'unsubscribe'],
+                ['delete', "collection/$collection_id", $collection_id, 'fields', 'intentions', 'miniviews', 'subprofileids', 'subprofiles', 'unsubscribe'],
 
                 // datarequest = POST. subprofile = nothing.
                 ['get', "profile/$profile_id", $profile_id, 'datarequest', 'subprofile'],
@@ -263,7 +254,7 @@ class ApiBehaviorTest extends TestCase
                 ['post', "profile/$profile_id", $profile_id, 'files', 'ms', 'publisher'],
                 ['put', "profile/$profile_id", $profile_id, 'files', 'ms', 'publisher'],
                 // interests/subprofiles = GET/POST/PUT, fields = GET/PUT
-//                ['delete', "profile/$profile_id", $profile_id, 'datarequest', 'fields', 'files', 'interests', 'ms', 'publisher', 'subprofiles'],
+                ['delete', "profile/$profile_id", $profile_id, 'datarequest', 'fields', 'files', 'interests', 'ms', 'publisher', 'subprofiles'],
 
                 // datarequest = POST
                 ['get', "subprofile/$subprofile_id", $subprofile_id, 'datarequest'],
@@ -271,7 +262,7 @@ class ApiBehaviorTest extends TestCase
                 ['post', "subprofile/$subprofile_id", $subprofile_id, 'ms', 'publisher'],
                 ['put', "subprofile/$subprofile_id", $subprofile_id, 'ms', 'publisher'],
                 // fields = GET/PUT
-//                ['delete', "subprofile/$subprofile_id", $subprofile_id, 'datarequest', 'fields', 'ms', 'publisher'],
+                ['delete', "subprofile/$subprofile_id", $subprofile_id, 'datarequest', 'fields', 'ms', 'publisher'],
             ] as $arg
         ) {
             $method = array_shift($arg);
@@ -307,9 +298,10 @@ class ApiBehaviorTest extends TestCase
         // POST:
         // - Note it's not totally analogous to profile because the path is a
         //   subpath of /profile/PID, not of /collection/CID.)
-        // - Superfluous path components are ignored -> checked elsewhere. <- @todo don't forget to check for GET/PUT.
+        // - Superfluous path components are ignored -> checked elsewhere. <- @todo
         // - Strange collection ID tests are implemented here (not in "basic
-        //   general errors 2") because the error message is different:
+        //   general errors 2") because the error message is different: not
+        //   "Unknown collection".
         // - Passing 'Incorrect data' is not possible like it is for creating
         //   profiles, because the passed data array only consists of fields.
         //   (There is no 'fields' sub-array).
@@ -389,7 +381,9 @@ class ApiBehaviorTest extends TestCase
         $structure = $api->getDatabasesStructure();
         $database_id = $api->getMemberId('Test');
         $collection_id = $api->getMemberId('Test', $structure[$database_id]['collections']);
-        $now = time();
+        $timestamp = time();
+
+        // Phase 1 - profile CRUD.
 
         // POST profile:
         // - Path components passed after 'profiles' are ignored.
@@ -400,13 +394,13 @@ class ApiBehaviorTest extends TestCase
         //   containing the fields is not. A non-array 'fields' value causes an
         //   error (which is tested elsewhere).
         // - Field values for differently typed fields are converted as
-        //   specified in TestApiTest::provideDataForNormalizeInputValue().
+        //   specified in TestApiBaseTest::provideDataForNormalizeInputValue().
         //   @todo we should write post/get tests for that, and maybe put/get;
         //     their use will be clearer if/when we can also run this test
         //     against a live API. For now, the use of the little extra TestApi
         //     code coverage it would provide is unclear, and we didn't.
         // - Adding duplicate fields (differently cased) will have the later
-        //   field being inserted. Also if the latter value is empty. <- TODO test this on PUT as well.
+        //   field being inserted. Also if the latter value is empty.
         // - Inserting the same data will result in a second profile.
         // - 'Empty' profile can be created.
         // @todo also still test defaults for all types.
@@ -424,7 +418,7 @@ class ApiBehaviorTest extends TestCase
         $profile3_id = $api->post("database/$database_id/profiles//bogus/");
         $profile4_id = $api->post("database/$database_id/profiles", ['FIELDS' => $profile]);
         // Get data, see if it gets returned in the expected format.
-        $result_backup = $result = $api->get("database/$database_id/profiles");
+        $result = $expected_profiles = $api->get("database/$database_id/profiles");
         // Test that all secrets are different and adhere to a certain format.
         // Then unset because we can't compare them below.
         $previous_value = '';
@@ -437,8 +431,8 @@ class ApiBehaviorTest extends TestCase
             }
             $previous_value = $value['secret'];
 
-            $this->assertInDateRange($api, $value, 'created', $now, $allowed_deviation);
-            $this->assertInDateRange($api, $value, 'modified', $now, $allowed_deviation);
+            $this->assertInDateRange($api, $value, 'created', $timestamp, $allowed_deviation);
+            $this->assertInDateRange($api, $value, 'modified', $timestamp, $allowed_deviation);
 
             unset($result['data'][$key]['secret'], $result['data'][$key]['created'], $result['data'][$key]['modified']);
             $allowed_deviation++;
@@ -499,7 +493,10 @@ class ApiBehaviorTest extends TestCase
         //array_multisort($result);
         //// I resisted alphabetizing above array...
         //array_multisort($expected);
+        // After this, we can use $expected_profiles (which contains the
+        // dates, secret, etc) as expected value for future assertions.
         $this->assertSame($expected, $result);
+
         // More tests for get-multiple:
         // - The start/limit/fields parameter names must be lower cased
         // - Superfluous path components, unknown parameters and unknown
@@ -507,50 +504,52 @@ class ApiBehaviorTest extends TestCase
         // - A non-array 'fields' parameter is ignored.
         // - Field names are matched case insensitively.
         // - Spaces are stripped from a ' field==value ' condition as a whole;
-        //   spaces around the operator are not allowed (are seen as part of
-        //   the field / value, and therefore ignored / incorrectly filtered).
+        //   spaces between field and operator are not allowed (are seen as
+        //   part of the field name, so the filter is ignored); neither are
+        //   spaces between operator and string value (because they're seen as
+        //   part of the value and therefore incorrectly filtered; date/number
+        //   values on the other hand are fine with a trailing space).
         // - Multiple conditions for the same field are ANDed.
         // - 'total' vaiue is constrained by filter ('fields').
         // Testing everything combined - trying to test some odd 'total' values.
+        // Compare to $expected_profiles (the result we fetched earlier), not
+        // $expected (the array we constructed), because that has correct
+        // created/modified/secret/etc for comparison
         // @todo still make test for limit <= 0, start.
         //   Maybe we should just make loops to go through some of these, so we
         //   still see what we're doing.
         // @todo still test orderby and more conditions, including multiple
-        //   conditions forthe same field. We'll need more data for that.
+        //   conditions for the same field. We'll need more data for that.
         //   Likely first test defaults for all types, per above.
         //   (Or maybe after some PUTting including batch PUTting)
         $result = $api->get("database/$database_id/profiles/$profile_id", ['fields' => false, 2 => 4, 'bogus' => 345, 'total' => 'TRue']);
-        $this->assertSame($result_backup, $result);
+        $this->assertSame($expected_profiles, $result);
         $result = $api->get("database/$database_id/profiles/bogus/path", ['fields' => 'nothing', 'total' => []]);
-        $this->assertSame($result_backup, $result);
-        $result = $api->get("database/$database_id/profiles/$profile_id", ['FIELds' => ['LastName==Muit'], 'LIMIT' => 1, 'starT' => 2, 'TOTAL' => false, 'order' => 'descendin']);
-        $this->assertSame($result_backup, $result);
-        $result = $api->get("database/$database_id/profiles/$profile_id", ['fields' => ['LastName ==Muit'], 'order' => ['desc']]);
-        $this->assertSame($result_backup, $result);
-        $result = $api->get("database/$database_id/profiles/$profile_id", ['fields' => ['LastName== Muit'], 'limit' => true, 'total' => 'thisisfalse']);
+        $this->assertSame($expected_profiles, $result);
+        $result = $api->get("database/$database_id/profiles/", ['FIELds' => ['LastName==Muit'], 'LIMIT' => 1, 'starT' => 2, 'TOTAL' => false, 'order' => 'descendin']);
+        $this->assertSame($expected_profiles, $result);
+        $result = $api->get("database/$database_id/profiles", ['fields' => ['LastName ==Muit'], 'order' => ['desc']]);
+        $this->assertSame($expected_profiles, $result);
+        $result = $api->get("database/$database_id/profiles", ['fields' => ['LastName== Muit'], 'limit' => true, 'total' => 'thisisfalse']);
         $this->assertSame(['start' => 0, 'limit' => 1, 'count' => 0, 'data' => []], $result);
-        $result = $api->get("database/$database_id/profiles/$profile_id", ['fields' => [' LASTNAME==mUIT ', 'ANumber>=-1'], 'limit' => ['evaluate-to-one'], 'total' => 'trUE', 'order' => 'descendING']);
+        $result = $api->get("database/$database_id/profiles", ['fields' => [' LASTNAME==mUIT ', 'ANumber>=-1'], 'limit' => ['evaluate-to-one'], 'total' => 'trUE', 'order' => 'descendING']);
         // Filtering selects [0, 1]; order descending, limit 1 -> selects [1]
         $this->assertSame(
-            ['start' => 0, 'limit' => 1, 'count' => 1, 'data' => [$result_backup['data'][1]], 'total' => 2],
+            ['start' => 0, 'limit' => 1, 'count' => 1, 'data' => [$expected_profiles['data'][1]], 'total' => 2],
             $result
         );
 
-        // @TODO duplicate the above to subprofiles. (Also changes we've made to POST testing?)
-
-        // Test the output of getting a single profile, see that it's exactly
-        // equal. Compare to $profile_backup, not the 'compare' array above, so
-        // we don't have to strip out the fields.
-        $this->assertSame($result_backup['data'][0], $api->get("profile/$profile_id"));
-        $this->assertSame($result_backup['data'][0]['fields'], $api->get("profile/$profile_id/fields"));
-        $this->assertSame($result_backup['data'][1], $api->get("profile/$profile2_id"));
-        $this->assertSame($result_backup['data'][1]['fields'], $api->get("profile/$profile2_id/fields"));
-        $this->assertSame($result_backup['data'][2], $api->get("profile/$profile3_id"));
-        $this->assertSame($result_backup['data'][2]['fields'], $api->get("profile/$profile3_id/fields"));
+        // Test the output of getting a single profile; see that it's equal.
+        $this->assertSame($expected_profiles['data'][0], $api->get("profile/$profile_id"));
+        $this->assertSame($expected_profiles['data'][0]['fields'], $api->get("profile/$profile_id/fields"));
+        $this->assertSame($expected_profiles['data'][1], $api->get("profile/$profile2_id"));
+        $this->assertSame($expected_profiles['data'][1]['fields'], $api->get("profile/$profile2_id/fields"));
+        $this->assertSame($expected_profiles['data'][2], $api->get("profile/$profile3_id"));
+        $this->assertSame($expected_profiles['data'][2]['fields'], $api->get("profile/$profile3_id/fields"));
         // Requests for a single profile containing too many URL components
         // return errors (so are exercised elsewhere). 'fields' works fine.
-        $this->assertSame($result_backup['data'][0]['fields'], $api->get("profile/$profile_id/fields/1"));
-        $this->assertSame($result_backup['data'][0]['fields'], $api->get("profile/$profile_id/fields/bogus/path"));
+        $this->assertSame($expected_profiles['data'][0]['fields'], $api->get("profile/$profile_id/fields/1"));
+        $this->assertSame($expected_profiles['data'][0]['fields'], $api->get("profile/$profile_id/fields/bogus/path"));
 
         // PUT single profile:
         // - illegal (non-array) 'field' value is ignored (unlike POST/PUT
@@ -560,53 +559,145 @@ class ApiBehaviorTest extends TestCase
         // - Path components passed after 'profile/ID' cause error.
         // The rest is analogous to POST database/ID/profiles (above):
         // - Nonexistent fields, nonexistent properties cause no error.
-        // - Fields with differently cased / duplicate names work like POST
+        // - Fields with differently cased / duplicate names work like POST.
         // (The concept of 'emptying out a field' doesn't really exist so we're
         // not testing that separately. Any value, including e.g. null for a
         // required field, gets converted to a specific value and that value
         // gets written.)
-        // - (Test conversion of types... later, after we do that for POST.)
-        $expected_profiles = $result_backup;
-        unset($result_backup);
-        $this->executePut($api, "profile/$profile3_id/", ['fields' => 'bogus', 'secret' => "s`~\"{}'üCE"]);
+        // - (Test conversion of types... later, after we do that for create/
+        //   POST also, as per above TODO.)
+        $result = $this->executePut($api, "profile/$profile3_id/", ['fields' => 'bogus', 'secret' => "s`~\"{}'üCE"]);
+        $this->assertSame("profile/$profile3_id", $result);
         $expected_profiles['data'][2]['secret'] = "s`~\"{}'?CE";
         // 'modified' did not change:
         $this->assertSame($expected_profiles['data'][2], $api->get("profile/$profile3_id"));
-        //@TODO just discovered that 'modified' only gets updated with actual value
-        //   updates; this is not the case yet with TestAPI.
-        //   First going to test bulk-PUT before fixing that, because that can influence test DB structure
+        // 'modified' also does not change if you try to e.g. change an integer
+        // from -1 to -1.9.
+        $result = $this->executePut($api, "profile/$profile3_id", ['fields' => ['ANumber' => -1.9, 'notafield' => 100], 'create' => true]);
+        $this->assertSame("profile/$profile3_id", $result);
+        $this->assertSame($expected_profiles['data'][2], $api->get("profile/$profile3_id"));
+        // Field can be emptied out, 'modified' changes: (Also, secret can be
+        // emptied out.)
+        sleep(1);
+        $result = $this->executePut($api, "profile/$profile_id", ['fields' => ['lastName' => 'ignored', 'lastNAME' => ''], 'secret' => '']);
+        $this->assertSame("profile/$profile_id", $result);
+        $result = $api->get("profile/$profile_id");
+        $this->assertNotSame($expected_profiles['data'][0]['modified'], $result['modified']);
+        $expected_profiles['data'][0]['modified'] = $result['modified'];
+        $expected_profiles['data'][0]['fields']['LastName'] = '';
+        $expected_profiles['data'][0]['secret'] = '';
+        $this->assertSame($expected_profiles['data'][0], $result);
+        // Same for profile/PID/field resource:
+        $result = $this->executePut($api, "profile/$profile3_id/fields", ['ANumber' => -1.2, 'notafield' => 100]);
+        $this->assertSame("profile/$profile3_id", $result);
+        $this->assertSame($expected_profiles['data'][2], $api->get("profile/$profile3_id"));
+        $result = $this->executePut($api, "profile/$profile2_id/fields/", ['lastNAME' => '']);
+        $this->assertSame("profile/$profile2_id", $result);
+        $result = $api->get("profile/$profile2_id");
+        $this->assertNotSame($expected_profiles['data'][1]['modified'], $result['modified']);
+        $expected_profiles['data'][1]['modified'] = $result['modified'];
+        $expected_profiles['data'][1]['fields']['LastName'] = '';
+        $this->assertSame($expected_profiles['data'][1], $result);
+        // @TODO POST profile/ID(/fields) probably does the same as PUT in the
+        //   live API. Even though this is not officially documented, we
+        //   probably want to make TestApi mirror this, and make tests as a
+        //   form of specification.
 
-        // @TODO further test putProfile, putProfilefields,
-        //   then test POST equivalents.
-        // - secret: check that it's still the same after a (sub)profile update
-        //   that does not update the secret
+        // Test delete; 'modified' is not changed; get() returns the expected
+        // structure; getProfiles() does not include the deleted profile.
+        $timestamp = time();
+        $result = $api->delete("profile/$profile3_id");
+        $this->assertSame(true, $result);
+        $result = $api->get("profile/$profile3_id");
+        $this->assertInDateRange($api, $result, 'removed', $timestamp, 1);
+        // Remember expected profile structure with created/modified/secret;
+        // assert that those properties don't change. (Overwrite new 'removed'
+        // with new date; 'fields' with empty strings.)
+        $expected_profile3 =  $expected_profiles['data'][2];
+        $expected_profile3['removed'] = $result['removed'];
+        $expected_profile3['fields'] = array_map(function () {
+            return '';
+        }, $expected_profile3['fields']);
+        $this->assertSame($expected_profile3, $result);
+        unset($expected_profiles['data'][2]);
+        // Renumber array keys 0, 1, 3 to 0, 1, 2.
+        $expected_profiles['data'] = array_values($expected_profiles['data']);
+        $expected_profiles['count'] = $expected_profiles['total'] = 3;
+        $result = $api->get("database/$database_id/profiles");
+        $this->assertSame($expected_profiles, $result);
 
+        // Re-delete the profile; this should cause an error to be returned.
+        $this->assertDeleteError($api, "profile/$profile3_id", 'This profile has already been removed');
+        // Detail: if we re-delete a profile with an invalid path extension,
+        // the error is not "Invalid method" but "already removed".
+        $this->assertDeleteError($api, "profile/$profile3_id/bogus", 'This profile has already been removed');
+        // Test CopernicaRestApi: a delete error will return true when not
+        // throwing exceptions.
+        $api->throwOnError = false;
+        $this->assertSame(true, $api->delete("profile/$profile3_id"));
+        $api->throwOnError = true;
 
-        // @TODO write a test to get back a single 'removed' profile. Test in
-        //   the live API whether the 'secret' is emptied <- it is not
-        // @TODO implement a test for: updating secret for deleted record also works.
-        // @todo test: deleting (sub)profile does not change 'modified' date.
+        // Updating a removed profile is possible. Updating 'secret' works
+        // (and still does not increase 'updated'):
+        $result = $this->executePut($api, "profile/$profile3_id", ['secret' => 'deletedd']);
+        $this->assertSame("profile/$profile3_id", $result);
+        $expected_profile3['secret'] = 'deletedd';
+        $result = $api->get("profile/$profile3_id");
+        $this->assertSame($expected_profile3, $result);
+        // Deleting a profile field to any value also 'works' in the sense that
+        // the 'modified' date changes (though the returned field does not;
+        // that just stays empty). Not when we send in an empty 'fields':
+        $result = $this->executePut($api, "profile/$profile3_id", ['fields' => []]);
+        $this->assertSame("profile/$profile3_id", $result);
+        $result = $api->get("profile/$profile3_id");
+        $this->assertSame($expected_profile3, $result);
+        // ...but in other cases it does. This behavior is probably unintended.
+        $timestamp = time();
+        $result = $this->executePut($api, "profile/$profile3_id", ['fields' => ['ANumber' => -1]]);
+        $this->assertSame("profile/$profile3_id", $result);
+        $result = $api->get("profile/$profile3_id");
+        $this->assertNotSame($expected_profile3['modified'], $result['modified']);
+        $this->assertInDateRange($api, $result, 'modified', $timestamp, 1);
+        $expected_profile3['modified'] = $result['modified'];
+        $this->assertSame($expected_profile3, $result);
+        // We'll do this again to prove the 'modified' time keeps updating.
+        sleep(1);
+        $timestamp = time();
+        $result = $this->executePut($api, "profile/$profile3_id", ['fields' => ['ANumber' => -1]]);
+        $this->assertSame("profile/$profile3_id", $result);
+        $result = $api->get("profile/$profile3_id");
+        $this->assertNotSame($expected_profile3['modified'], $result['modified']);
+        $this->assertInDateRange($api, $result, 'modified', $timestamp, 1);
+        $expected_profile3['modified'] = $result['modified'];
+        $this->assertSame($expected_profile3, $result);
 
-
-
-        // @TODO test putProfiles after implementing in TestApi. Tested on live:
+        // @TODO test putProfiles after fixing it in TestApi (to only update 'modified' when needed). Tested on live:
         // - if 'fields' param is empty array or contains only unknown fields:
         //   update everyhing.
         // - if 'fields' contains a known field and a record matches: updates
         //   that (regarcless of 'create' praram), returns true.
-        // - if 'fields' contains a known field and no record matches:
+        // - if 'fields' contains a known field and no _non removed_ record matches:
         //   - if 'create' param: creates new entity, returns location
         //   - if not: updates nothing, returns true.
-
-        // @todo test when putProfiles updates the _modified date
-        //   ^ <- also if there are no matching/real fields / if 'fields' is empty. <- I thought it did and I documented that, but I may be wrong. putProfile(fields)() does not.
-        //   ^ <- for removed records too. <- tested to be true on LIVE; call returns true.
-        // @todo test if putProfiles updates the _modified date <- for removed records too?
+        // - 'modified' only gets increased if a field value actually changes.
+        //   (And never for 'deleted' records.)
         // @TODO support for putProfiles create=1
 
+        // Phase 2 - subprofile CRUD.
+        //
+        // Note the POST URL is profile/PID/subprofiles/CID, not
+        // collection/CID/subprofiles (which does not exist).
+        // The PUT-multiple URL is profile/PID/subprofiles/CID <- @todo verify if CID is indeed required, after implementing
+        // There are two GET-multiple URLs:
+        // - collection/CID/subprofiles (which has parameters)
+        // - profile/PID/subprofiles/CID (which has no parameters) <- @todo verify
+        // (Which one is the subprofile equivalent to database/ID/profiles,
+        // depends on how you look at things / on the application, I guess...)
+        // @TODO implement/test GET profile/PID/subprofiles/CID. Check if it
+        //   has any parameters because the docs suggest it does not.
 
         // Same insert/get tests for subprofile - except there's no empty
-        // 'properties', only fields.
+        // 'properties' (so no 'secret' either), only fields.
         $subprofile = [
             'Score' => 3,
             'score' => 6,
@@ -616,20 +707,19 @@ class ApiBehaviorTest extends TestCase
         $subprofile2_id = $api->post("profile/$profile_id/subprofiles/$collection_id", $subprofile);
         $subprofile3_id = $api->post("profile/$profile2_id/subprofiles/$collection_id/bogus/path");
 
-        $result_backup = $result = $api->get("collection/$collection_id/subprofiles");
+        $result = $expected_subprofiles = $api->get("collection/$collection_id/subprofiles");
         foreach ($result['data'] as $key => $value) {
             $this->assertInitialSecretFormat($value);
             $this->assertNotEquals($previous_value, $value['secret']);
             $previous_value = $value['secret'];
 
-            $this->assertInDateRange($api, $value, 'created', $now, $allowed_deviation);
-            $this->assertInDateRange($api, $value, 'modified', $now, $allowed_deviation);
+            $this->assertInDateRange($api, $value, 'created', $timestamp, $allowed_deviation);
+            $this->assertInDateRange($api, $value, 'modified', $timestamp, $allowed_deviation);
 
             unset($result['data'][$key]['secret'], $result['data'][$key]['created'], $result['data'][$key]['modified']);
             $allowed_deviation++;
         }
-
-        $expected = ['start' => 0, 'count' => 3, 'total' => 3, 'limit' => 100, 'data' => [
+        $expected = ['start' => 0, 'limit' => 100, 'count' => 3, 'data' => [
             [
                 'ID' => (string)$subprofile_id,
                 'fields' => ['Score' => '6', 'ActionTime' => '2020-04-27 14:15:34'],
@@ -651,25 +741,176 @@ class ApiBehaviorTest extends TestCase
                 'collection' => (string)$collection_id,
                 'removed' => false,
             ],
-        ]];
-        array_multisort($result);
-        array_multisort($expected);
+        ], 'total' => 3];
         $this->assertSame($expected, $result);
-        $this->assertSame($result_backup, $api->get("collection/$collection_id/subprofiles/$subprofile_id"));
-        $this->assertSame($result_backup, $api->get("collection/$collection_id/subprofiles/bogus/path"));
+        $result = $api->get("collection/$collection_id/subprofiles/$subprofile_id", ['fields' => false, 2 => 4, 'bogus' => 345, 'total' => 'TRue']);
+        $this->assertSame($expected_subprofiles, $result);
+        $result = $api->get("collection/$collection_id/subprofiles/bogus/path", ['fields' => 'nothing', 'total' => []]);
+        $this->assertSame($expected_subprofiles, $result);
+        $result = $api->get("collection/$collection_id/subprofiles/", ['FIELds' => ['Score==6'], 'LIMIT' => 1, 'starT' => 2, 'TOTAL' => false, 'order' => 'descendin']);
+        $this->assertSame($expected_subprofiles, $result);
+        $result = $api->get("collection/$collection_id/subprofiles", ['fields' => ['Score ==6'], 'order' => ['desc']]);
+        $this->assertSame($expected_subprofiles, $result);
+        // We're testing different things here than with profile (because we're
+        // waiting to have more data to do all): Score== 6 actually does filter
+        // (which it doesn't do for string values).
+        $result = $api->get("collection/$collection_id/subprofiles", ['fields' => ['Score== 6'], 'limit' => true, 'total' => 'thisisfalse']);
+        $this->assertSame(['start' => 0, 'limit' => 1, 'count' => 1, 'data' => [$expected_subprofiles['data'][0]]], $result);
+        $result = $api->get("collection/$collection_id/subprofiles", ['fields' => [' Score== 6 ', 'ActionTime<= 2020-04-27 14:15:34'], 'limit' => ['evaluate-to-one'], 'total' => 'trUE', 'order' => 'descendING']);
+        // Filtering selects [0, 1]; order descending, limit 1 -> selects [1]
+        $this->assertSame(
+            ['start' => 0, 'limit' => 1, 'count' => 1, 'data' => [$expected_subprofiles['data'][1]], 'total' => 2],
+            $result
+        );
 
-        $this->assertSame($result_backup['data'][0], $api->get("subprofile/$subprofile_id"));
-        $this->assertSame($result_backup['data'][0]['fields'], $api->get("subprofile/$subprofile_id/fields"));
-        $this->assertSame($result_backup['data'][1], $api->get("subprofile/$subprofile2_id"));
-        $this->assertSame($result_backup['data'][1]['fields'], $api->get("subprofile/$subprofile2_id/fields"));
-        $this->assertSame($result_backup['data'][2], $api->get("subprofile/$subprofile3_id"));
-        $this->assertSame($result_backup['data'][2]['fields'], $api->get("subprofile/$subprofile3_id/fields"));
-        $this->assertSame($result_backup['data'][0]['fields'], $api->get("subprofile/$subprofile_id/fields/1"));
-        $this->assertSame($result_backup['data'][0]['fields'], $api->get("subprofile/$subprofile_id/fields//bogus/path"));
+        // Test the output of getting a single subprofile; see that it's equal.
+        $this->assertSame($expected_subprofiles['data'][0], $api->get("subprofile/$subprofile_id"));
+        $this->assertSame($expected_subprofiles['data'][0]['fields'], $api->get("subprofile/$subprofile_id/fields"));
+        $this->assertSame($expected_subprofiles['data'][1], $api->get("subprofile/$subprofile2_id"));
+        $this->assertSame($expected_subprofiles['data'][1]['fields'], $api->get("subprofile/$subprofile2_id/fields"));
+        $this->assertSame($expected_subprofiles['data'][2], $api->get("subprofile/$subprofile3_id"));
+        $this->assertSame($expected_subprofiles['data'][2]['fields'], $api->get("subprofile/$subprofile3_id/fields"));
+        $this->assertSame($expected_subprofiles['data'][0]['fields'], $api->get("subprofile/$subprofile_id/fields/1"));
+        $this->assertSame($expected_subprofiles['data'][0]['fields'], $api->get("subprofile/$subprofile_id/fields//bogus/path"));
 
-        // @TODO test GET profile/PID/subprofiles/CID. Check if it has any
-        //   parameters (unlike collection/subprofiles) because the docs suggest
-        //   it does not.
+        // PUT single subprofile. (Unlike POST, this does have 'secret' - or
+        // rather, we have 1 PUT resource with, and 1 without.)
+        $result = $this->executePut($api, "subprofile/$subprofile3_id/", ['fields' => 'bogus', 'secret' => "s`~\"{}'üCE"]);
+        $this->assertSame("subprofile/$subprofile3_id", $result);
+        $expected_subprofiles['data'][2]['secret'] = "s`~\"{}'?CE";
+        // 'modified' did not change:
+        $this->assertSame($expected_subprofiles['data'][2], $api->get("subprofile/$subprofile3_id"));
+        // 'modified' also does not change if you try to e.g. change an integer
+        // from -1 to -1.9.
+        $result = $this->executePut($api, "subprofile/$subprofile3_id", ['fields' => ['Score' => -1.9, 'notafield' => 100], 'create' => true]);
+        $this->assertSame("subprofile/$subprofile3_id", $result);
+        $this->assertSame($expected_subprofiles['data'][2], $api->get("subprofile/$subprofile3_id"));
+        // Field can be emptied out, 'modified' changes: (Also, secret can be
+        // emptied out.)
+        sleep(1);
+        $result = $this->executePut($api, "subprofile/$subprofile_id", ['fields' => ['actIONTime' => 'ignored', 'ActionTime' => ''], 'secret' => '']);
+        $this->assertSame("subprofile/$subprofile_id", $result);
+        $result = $api->get("subprofile/$subprofile_id");
+        $this->assertNotSame($expected_subprofiles['data'][0]['modified'], $result['modified']);
+        $expected_subprofiles['data'][0]['modified'] = $result['modified'];
+        $expected_subprofiles['data'][0]['fields']['ActionTime'] = '';
+        $expected_subprofiles['data'][0]['secret'] = '';
+        $this->assertSame($expected_subprofiles['data'][0], $result);
+        // Same for subprofile/PID/field resource:
+        $result = $this->executePut($api, "subprofile/$subprofile3_id/fields", ['Score' => -1.2, 'notafield' => 100]);
+        $this->assertSame("subprofile/$subprofile3_id", $result);
+        $this->assertSame($expected_subprofiles['data'][2], $api->get("subprofile/$subprofile3_id"));
+        $result = $this->executePut($api, "subprofile/$subprofile2_id/fields/", ['actIONTime' => '']);
+        $this->assertSame("subprofile/$subprofile2_id", $result);
+        $result = $api->get("subprofile/$subprofile2_id");
+        $this->assertNotSame($expected_subprofiles['data'][1]['modified'], $result['modified']);
+        $expected_subprofiles['data'][1]['modified'] = $result['modified'];
+        $expected_subprofiles['data'][1]['fields']['ActionTime'] = '';
+        $this->assertSame($expected_subprofiles['data'][1], $result);
+        // @TODO POST subprofile/ID(/fields) probably does the same as PUT in
+        //   the live API. Even though this is not officially documented, we
+        //   probably want to make TestApi mirror this, and make tests as a
+        //   form of specification.
+
+        // Test delete; 'modified' is not changed; get() returns the expected
+        // structure; getProfiles() does not include the deleted subprofile.
+        $timestamp = time();
+        $result = $api->delete("subprofile/$subprofile3_id");
+        $this->assertSame(true, $result);
+        $result = $api->get("subprofile/$subprofile3_id");
+        $this->assertInDateRange($api, $result, 'removed', $timestamp, 1);
+        // Remember expected subprofile structure with created/modified/secret;
+        // assert that those properties don't change. (Overwrite new 'removed'
+        // with new date; 'fields' with empty strings.)
+        $expected_subprofile3 =  $expected_subprofiles['data'][2];
+        $expected_subprofile3['removed'] = $result['removed'];
+        $expected_subprofile3['fields'] = array_map(function () {
+            return '';
+        }, $expected_subprofile3['fields']);
+        $this->assertSame($expected_subprofile3, $result);
+        unset($expected_subprofiles['data'][2]);
+        $expected_subprofiles['count'] = $expected_subprofiles['total'] = 2;
+        $result = $api->get("collection/$collection_id/subprofiles");
+        $this->assertSame($expected_subprofiles, $result);
+
+        // Re-delete the subprofile; this should cause an error to be returned.
+        $this->assertDeleteError($api, "subprofile/$subprofile3_id", 'This subprofile has already been removed');
+        // Detail: if we re-delete a subprofile with an invalid path extension,
+        // the error is not "Invalid method" but "already removed".
+        $this->assertDeleteError($api, "subprofile/$subprofile3_id/bogus", 'This subprofile has already been removed');
+        // Test CopernicaRestApi: a delete error will return true when not
+        // throwing exceptions.
+        $api->throwOnError = false;
+        $this->assertSame(true, $api->delete("subprofile/$subprofile3_id"));
+        $api->throwOnError = true;
+
+        // Updating a removed subprofile is possible. Updating 'secret' works
+        // (and still does not increase 'updated'):
+        $result = $this->executePut($api, "subprofile/$subprofile3_id", ['secret' => 'deletedd']);
+        $this->assertSame("subprofile/$subprofile3_id", $result);
+        $expected_subprofile3['secret'] = 'deletedd';
+        $result = $api->get("subprofile/$subprofile3_id");
+        $this->assertSame($expected_subprofile3, $result);
+        // Deleting a subprofile field to any value also 'works' in the sense
+        // that the 'modified' date changes (though the returned field does
+        // not; that just stays empty). Not when we send in an empty 'fields':
+        $result = $this->executePut($api, "subprofile/$subprofile3_id", ['fields' => []]);
+        $this->assertSame("subprofile/$subprofile3_id", $result);
+        $result = $api->get("subprofile/$subprofile3_id");
+        $this->assertSame($expected_subprofile3, $result);
+        // ...but in other cases it does. This behavior is probably unintended.
+        $timestamp = time();
+        $result = $this->executePut($api, "subprofile/$subprofile3_id", ['fields' => ['Score' => -1]]);
+        $this->assertSame("subprofile/$subprofile3_id", $result);
+        $result = $api->get("subprofile/$subprofile3_id");
+        $this->assertNotSame($expected_subprofile3['modified'], $result['modified']);
+        $this->assertInDateRange($api, $result, 'modified', $timestamp, 1);
+        $expected_subprofile3['modified'] = $result['modified'];
+        $this->assertSame($expected_subprofile3, $result);
+        // We'll do this again to prove the 'modified' time keeps updating.
+        sleep(1);
+        $timestamp = time();
+        $result = $this->executePut($api, "subprofile/$subprofile3_id", ['fields' => ['Score' => -1]]);
+        $this->assertSame("subprofile/$subprofile3_id", $result);
+        $result = $api->get("subprofile/$subprofile3_id");
+        $this->assertNotSame($expected_subprofile3['modified'], $result['modified']);
+        $this->assertInDateRange($api, $result, 'modified', $timestamp, 1);
+        $expected_subprofile3['modified'] = $result['modified'];
+        $this->assertSame($expected_subprofile3, $result);
+
+        // @TODO implement and test PUT profile/PID/subprofiles (copy from
+        //   putProfiles()); check if a /COLLECTION-ID suffix is
+        //   required (as is the case for GET/POST). Test putProfiles above
+        //   first, though.
+
+        // Phase 2a - combining 1 + 2: deletion of profile with subprofiles.
+        //
+        // Test that subprofiles are deleted too, and that their 'removed'
+        // dates are updated. (The two remaining subprofiles are both connected
+        // to 'profile 1'. Add one for profile 2 first, to prove not all
+        // subprofiles are removed by accident.)
+        $subprofile4_id = $api->post("profile/$profile2_id/subprofiles/$collection_id");
+        $timestamp = time();
+        $result = $api->delete("profile/$profile_id");
+        $this->assertSame(true, $result);
+        $result = $api->get("collection/$collection_id/subprofiles");
+        $this->assertSame(1, $result['total']);
+        $this->assertSame($subprofile4_id, $result['data'][0]['ID']);
+        // Check that 'removed' is set for both, and the rest is the same.
+        $result = $api->get("subprofile/$subprofile_id");
+        $this->assertInDateRange($api, $result, 'removed', $timestamp, 1);
+        $expected_subprofiles['data'][0]['removed'] = $result['removed'];
+        $expected_subprofiles['data'][0]['fields'] = array_map(function () {
+            return '';
+        }, $expected_subprofiles['data'][0]['fields']);
+        $this->assertSame($expected_subprofiles['data'][0], $result);
+        $result = $api->get("subprofile/$subprofile2_id");
+        $this->assertInDateRange($api, $result, 'removed', $timestamp, 1);
+        $expected_subprofiles['data'][1]['removed'] = $result['removed'];
+        $expected_subprofiles['data'][1]['fields'] = array_map(function () {
+            return '';
+        }, $expected_subprofiles['data'][0]['fields']);
+        $this->assertSame($expected_subprofiles['data'][1], $result);
     }
 
     /**
@@ -717,7 +958,7 @@ class ApiBehaviorTest extends TestCase
     private function assertInitialSecretFormat(array $entity)
     {
         $this->assertTrue(isset($entity['secret']));
-        $this->assertMatchesRegularExpression('/^[0-9a-f]{28}$/', $entity['secret']);
+        $this->assertSame(1, preg_match('/^[0-9a-f]{28}$/', $entity['secret']));
     }
 
     /**
@@ -751,7 +992,31 @@ class ApiBehaviorTest extends TestCase
     }
 
     /**
-     * Executes put(), catches 303.
+     * Executes delete() that is supposed to fail; checks error.
+     *
+     * @param \CopernicaApi\CopernicaRestAPI|\CopernicaApi\Tests\TestApi $api
+     *   An API instance.
+     * @param $resource
+     *   Resource (URI relative to the versioned API) to send data to.
+     * @param $expected_message
+     *   Expected error message.
+     */
+    private function assertDeleteError($api, $resource, $expected_message)
+    {
+        try {
+            $api->delete($resource);
+            throw new LogicException("delete($resource) should have thrown an exception and didn't.");
+        } catch (RuntimeException $exception) {
+            if ($exception->getCode() !== 400) {
+                throw $exception;
+            }
+            $result = $this->extractResponseMessage($exception);
+        }
+        $this->assertSame($expected_message, $result);
+    }
+
+    /**
+     * Executes put(), catches 303, checks that we get "Location:" in message.
      *
      * This is a standalone method because most/all code behind TestApi::put()
      * is supposed to behave differently from get()/post(): it is supposed to
@@ -770,22 +1035,23 @@ class ApiBehaviorTest extends TestCase
      *   (Optional) parameters for the API query. (This parameter is taken over
      *   from CopernicaRestAPI but it is unclear which PUT requests need
      *   parameters, at the time of writing this method.)
-     * @param bool $add_random_params
-     *  (Optional) False to suppress adding random parameters to the request.
      * @param bool $execute_twice
      *  (Optional) False to execute the call only once, and not execute it with
      *  throwError=False.
+     *
+     * @return string|true
+     *   The relative path in the 'Location:' header returned in the fake
+     *   header (part of the exception message).
      */
-    private function executePut($api, $resource, $data, array $parameters = array(), $add_random_params = true, $execute_twice = true)
+    private function executePut($api, $resource, $data, array $parameters = array(), $execute_twice = true)
     {
         // While we're here anyway: just randomly add parameters to test that
         // they're all ignored.
         // @todo this would be a good addition once we get to running this test
         //   against a live API. For now, we haven't bothered to test all
         //   requests with this manually, and we know TestApi doesn't handle
-        //   them (and even doesn't allow them at the moment) so it doesn't add
-        //   anything. If we get to doing this, maybe we should do it for get()
-        //   too.
+        //   them so it doesn't add anything. If we get to doing this, maybe we
+        //   should do it for get() too.
         if (false && rand(0, 1)) {
             $params_copy = array_change_key_case($parameters);
             if (!isset($params_copy['fields'])) {
@@ -797,6 +1063,16 @@ class ApiBehaviorTest extends TestCase
 
         $old_throw_state = $api->throwOnError;
 
+        // To introduce some more randomness, sometimes switch order of
+        // execution of both calls - since a second put() may not behave
+        // exactly the same as the first.
+        if ($execute_twice && rand(0, 1)) {
+            $api->throwOnError = false;
+            $this->assertSame(true, $api->put($resource, $data, $parameters));
+            // Don't execute the above again.
+            $execute_twice = false;
+        }
+
         $api->throwOnError = true;
         try {
             $api->put($resource, $data, $parameters);
@@ -806,6 +1082,8 @@ class ApiBehaviorTest extends TestCase
             if ($code !== 303) {
                 throw $exception;
             }
+            $return = preg_match('|^Location:\s*?http(?:s)?://[^/]+/(\S+)|m', $exception->getMessage(), $matches)
+                ? $matches[1] : true;
         }
 
         if ($execute_twice) {
@@ -814,6 +1092,41 @@ class ApiBehaviorTest extends TestCase
         }
 
         $api->throwOnError = $old_throw_state;
+
+        return $return;
+    }
+
+    /**
+     * Extracts API response / body from an exception message.
+     *
+     * @param \RuntimeException $exception
+     *   The response with headers and body concatenated, which we get from
+     *   some Curl calls.*
+     * @param bool $extract_message_body
+     *   (Optional) If false, return full response instead of the "message"
+     *   part from the JSON decoded body.
+     *
+     * @return mixed
+     *   False if the exception message is not as we expected or the "message"
+     *   part could not be found. Otherwise response / "message".
+     */
+    private function extractResponseMessage(RuntimeException $exception, $extract_message_body = true)
+    {
+        // This should always match. Assume first-to-last double quote matches
+        // correctly.
+        $return = preg_match('/Response contents: \"(.*)\"\./s', $exception->getMessage(), $matches);
+        if ($return) {
+            if ($extract_message_body) {
+                $parts = explode("\r\n\r\n", $matches[1], 2);
+                $return = json_decode($parts[1], true);
+                $return = isset($return['error']['message']) ? $return['error']['message'] : false;
+            } else {
+                // We're not using this yet.
+                $return = $matches[1];
+            }
+        }
+
+        return $return;
     }
 
     /**
@@ -866,9 +1179,9 @@ class ApiBehaviorTest extends TestCase
  *   page itself. This is a good idea for the 'total' parameter because it can
  *   speed up calls and lighten server load, so IMHO this should be copied to
  *   the profiles page and be more explicit about speedup.
- *   - I am not sure what 'dataonly' does. Also on the subprofiles page it
- *     mentions "profiles", Does this parameter even do anything or has it been
- *     superseded by total=false?
+ *   - I am not sure what 'dataonly' does. Does this parameter even do anything
+ *     or has it been superseded by total=false? (Also on the subprofiles page
+ *     it mentions "profiles".)
  * - https://www.copernica.com/en/documentation/restv2/rest-put-profile-subprofiles
  *   documents things wrongly; its info is from PUT profile/fields. It should
  *   take https://www.copernica.com/en/documentation/restv2/rest-put-database-profiles
@@ -886,4 +1199,11 @@ class ApiBehaviorTest extends TestCase
  *   profile but we have a specific call for this:
  *   https://www.copernica.com/en/documentation/restv2/rest-get-profile-subprofiles
  *   (If it's easy enough to link to the latter from the former page.)
+ * Also: likely behavior bug:
+ * - updating a deleted profile is possible and changes the 'modified' date.
+ *   Even if you update it to the same values which the profile had before
+ *   deletion (which is something that does happen with a non-deleted profile;
+ *   an update to the same value does not change its 'modified' date.)
+ * - Not sure if this counts as a bug, but: inserting a subprofile for a
+ *   deleted profile is possible.
  */
