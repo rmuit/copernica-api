@@ -94,6 +94,12 @@ class CopernicaRestAPI
      */
     private function curlExec($curl, $method, $resource, $allowed_http_codes = array())
     {
+        if ($method === 'DELETE' && $this->throwOnError) {
+            // Return header + body rather than true/false. (PUT/POST do this
+            // already. Strange location for this statement, but it keeps diffs
+            // more organized.)
+            curl_setopt_array($curl, array(CURLOPT_RETURNTRANSFER => true, CURLOPT_HEADER => true));
+        }
         $answer = curl_exec($curl);
 
         // Check for errors. We assume any non-2xx HTTP code indicates some
@@ -115,6 +121,12 @@ class CopernicaRestAPI
                 // let those responses pass through (given that we don't
                 // return the HTTP code or headers to the caller).
                 throw new \RuntimeException("$method $resource returned HTTP code $httpCode. Response contents: \"$answer\".", $httpCode);
+            }
+
+            if ($method === 'DELETE') {
+                // We don't need the header/body and want to return true for
+                // backward compatibility. (Again, strange location.)
+                $answer = true;
             }
         }
 
