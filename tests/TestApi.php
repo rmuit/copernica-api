@@ -879,8 +879,9 @@ class TestApi
      * @param string $resource
      *   Resource (URI relative to the versioned API) to send data to.
      *
-     * @return bool
-     *   True for success; false for failure if $this->throwOnError is false.
+     * @return true
+     *   Both on success and on failure if $this->throwOnError is false (for
+     *   compatibility with CopernicaRestAPI).
      *
      * @throws \LogicException
      *   If this class does not know how to handle input.
@@ -890,7 +891,7 @@ class TestApi
     public function delete($resource)
     {
         $parts = $this->initRestCall('DELETE', $resource);
-        if ($parts === false) {
+        if ($parts === true) {
             return $parts;
         }
         // Fairly horrible way of passing extra info back depending on 'base':
@@ -908,16 +909,6 @@ class TestApi
                     return $return;
                 }
                 $this->simulateException($parts[1], $parts[2], 'DELETE');
-                break;
-
-            case '_simulate_strange_response':
-                $this->checkUrlPartCount($parts, 2, 2);
-                // false is a 'strange response'; neither true or another value
-                // (ID value only, but we don't check that) are 'strange'.
-                if ($parts[1] === 'false') {
-                    return false;
-                }
-                // Fall through to "not implemented" <-better: "invalid method".
                 break;
 
             case 'collection':
@@ -1061,14 +1052,14 @@ class TestApi
      * @param string $resource
      * @param bool $addLog
      *
-     * @return false|array
-     *   Array with 'error' key for errors on GET; false for errors on other
-     *   methods; numerically keyed array with URL parts by default. If the
-     *   path is / starts with an 'entity/ID' format, the ID was validated...
-     *   and depending on the 'entity type', an extra part may have been pushed
-     *   onto the array. (Which is a fairly horrible way of communicating
-     *   extra info back to the caller, which now every caller must be aware
-     *   of.)
+     * @return bool|array
+     *   Array with 'error' key for errors on GET; true for errors on DELETE;
+     *   false for errors on other methods. If no error: numerically keyed
+     *   array with URL parts. If the path is / starts with an 'entity/ID'
+     *   format, the ID was validated... and depending on the 'entity type', an
+     *   extra part may have been pushed onto the array. (This is a fairly
+     *   horrible way of communicating extra info back to the caller, which now
+     *   every caller must be aware of.)
      */
     protected function initRestCall($method, $resource, $addLog = true)
     {
@@ -1905,9 +1896,10 @@ class TestApi
      * @param bool $extra_components
      *   (Optional) true if the queried resource had more than 2 components.
      *
-     * @return bool
-     *   True on success; error value (which is only false in practice) only
-     *   if $this->throwOnError is false.
+     * @return true
+     *   Both for success and for failure if $this->throwOnError is false, for
+     *   convenience to delete(). (If another caller ever needs to call this
+     *   method, we'll probably need to do some rewriting.)
      */
     protected function deleteProfile($profile_id, $database_id, $extra_components = false)
     {
@@ -1949,9 +1941,10 @@ class TestApi
      * @param bool $extra_components
      *   (Optional) true if the queried resource had more than 2 components.
      *
-     * @return bool
-     *   True on success; error value (which is only false in practice) only
-     *   if $this->throwOnError is false.
+     * @return true
+     *   Both for success and for failure if $this->throwOnError is false, for
+     *   convenience to delete(). (If another caller ever needs to call this
+     *   method, we'll probably need to do some rewriting.)
      */
     protected function deleteSubprofile($subprofile_id, $collection_id, $extra_components = false)
     {
