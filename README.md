@@ -1,21 +1,20 @@
 Copernica REST API PHP tools [![Build Status](https://travis-ci.com/rmuit/sharpspring-restapi.svg?branch=master)](https://travis-ci.com/rmuit/copernica-api)
 ============================
 
-This builds on the CopernicaRestAPI class which Copernica offer for download,
-and adds an API Client class containing some useful helper methods to work
-more smoothly with returned data.
-
-The code is the result of several months of work with various endpoints, to
-the level that I'm reasonably confident the code is generally applicable and
-future proof - so it's time to publish. Ideally it still needs work on
-handling/documentation of errors.
+This project contains
+* a ciient for the REST API (which adds some functionality and better error
+  handling around the CopernicaRestAPI class that Copernica offer for download);
+* a framework to enable writing automated tests for your PHP code that uses
+  this library.
 
 ## Usage
 
-Only the basic API methods in CopernicaRestAPI are documented; the rest is left
-for developers to discover if they feel so inclined.
+Use the CopernicaRestClient class; act as if CopernicaRestAPI does not exist.
 
-CopernicaRestAPI contains get() / post() / put() and delete() calls (just like
+Only the basic API methods in CopernicaRestClient are documented; the rest is
+left for developers to discover if they feel so inclined.
+
+CopernicaRestClient contains get() / post() / put() and delete() calls (just like
 the standard CopernicaRestAPI); it also contains two extra calls getEntity()
 and getEntities() which do some extra checks and are guaranteed to return an
 'entity' or 'list of entities' instead. (An 'entity' is something like a
