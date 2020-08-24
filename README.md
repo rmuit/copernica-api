@@ -110,11 +110,11 @@ instead. Things to know:
     returned without throwing an exception: see above example code.
   - By default an exception is thrown if we try to re-delete an entity which
     was deleted earlier. This exception can be suppressed by passing
-    CopernicaRestClient::DELETE_RETURNS_ALREADY_REMOVED to the third argument
+    CopernicaRestClient::DELETE_RETURNS_ALREADY_REMOVED to the second argument
     of `delete()` or setting it using `suppressApiCallErrors()`. In this case,
     the `delete()` call will return the full headers and body (including the
-    JSON encoded error message). The value can be ignored and the fact that the
-    call returns normally can be treated as 'success'.
+    JSON encoded error message). This return value can be ignored and the fact
+    that the call returns normally can be treated as 'success'.
 
 - Some API endpoints behave in unknown ways. CopernicaRestClient throws
   exceptions by default for unknown behavior; the intention is to never return
@@ -269,10 +269,9 @@ provide a composer.json for it):
 * https://github.com/Relinks/copernica-rest
 
 Last commit Oct 2018. Uses the Curl code from Copernica's example class with
-few changes (and does not yet fix the 'fields parameter' bug that has been
-fixed in this project). The class more or less explicitly states that new
-methods must be created for every single API call - and only three of them are
-created so far. This cannot be considered "in active development".
+few changes. The class more or less explicitly states that new methods must be
+created for every single API call - and only three of them are created so far.
+This cannot be considered "in active development".
 
 * https://github.com/TomKriek/copernica-api-php (and forks)
 
@@ -287,12 +286,12 @@ the code and the README, this has been written by someone who
   array (for e.g. database fields); he wants dedicated methods and classes for
   each entity and its properties.
 
-I can certainly appreciate that last sentiment for 'embedded entities' (like
-fields inside collections inside the response for a database), which contain
-layers of metadata that calling code shouldn't need to deal with. However,
-embedded entities are an outlier, not the norm.
+I can appreciate that last sentiment for 'embedded entities' (like fields
+inside collections inside the response for a database), which contain layers of
+metadata that calling code shouldn't need to deal with. However, embedded
+entities are an outlier, not the norm.
 
-While I am certainly [not](https://github.com/rmuit/sharpspring-restapi)
+While I am [not](https://github.com/rmuit/sharpspring-restapi)
 [against](https://github.com/rmuit/PracticalAfas/blob/master/README-update.md)
 using value objects where it has a practical purpose... I tend to favor working
 with the returned array data if the reasons to do otherwise aren't clear.

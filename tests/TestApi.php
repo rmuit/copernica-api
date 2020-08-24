@@ -66,7 +66,7 @@ class TestApi
      *
      * @var string[]
      */
-    protected static $allowedFieldTypes = ['text' => 1, 'email' => 1, 'integer' => 1, 'float' => 1, 'date' => 1, 'datetime' => 1, 'empty_date' => 1, 'empty_datetime' => 1];
+    protected static $allowedFieldTypes = ['text' => 1, 'email' => 1, 'select' => 1, 'integer' => 1, 'float' => 1, 'date' => 1, 'datetime' => 1, 'empty_date' => 1, 'empty_datetime' => 1];
 
     /**
      * Set to True to throw exceptions on Curl errors / strange HTTP codes.
@@ -222,6 +222,25 @@ class TestApi
                 if (is_scalar($value)) {
                     // Convert to string. Boolean becomes "1" / "".
                     $value = (string) $value;
+                } else {
+                    // Other values are not ignored (because they don't
+                    // become the default value for the field on inserting);
+                    // they're explicitly "".
+                    $value = '';
+                }
+                break;
+
+            case 'select':
+                // Only let the value pass if the string equivalent (e.g. "1"
+                // for true) is contained in the allowed values, matching case
+                // sensitively (unlike other fields). If not, the value becomes
+                // empty string. (It makes no difference if the empty string is
+                // among the explicitly configured values.) Right trim choices,
+                // not the value itself (which leads to values with leading
+                // spaces always being discarded).
+                $choices = array_map('rtrim', explode("\r\n", $field_struct['value']));
+                if (is_scalar($value) && in_array((string)$value, $choices, true)) {
+                    $value = (string)$value;
                 } else {
                     // Other values are not ignored (because they don't
                     // become the default value for the field on inserting);
@@ -2080,8 +2099,12 @@ class TestApi
                     continue;
                 }
                 $field_struct = $available_fields[strtolower($matches[1])];
+                // Non-strings need to be 'normalized', which means converting
+                // empty strings to a 'zero' value, and trimming them. Strings
+                // can be skipped because they're already strings (and are not
+                // supposed to be trimmed).
                 $string_type = !in_array($field_struct['type'], ['integer', 'float', 'date', 'datetime', 'empty_date', 'empty_datetime'], true);
-                $value = $string_type ? $matches[3] : ltrim($matches[3]);
+                $value = $string_type ? $matches[3] : static::normalizeInputValue($matches[3], $field_struct, $this->getTimezone());
                 switch ($matches[2]) {
                     case '==':
                         $operator = '=';
@@ -3160,16 +3183,18 @@ class TestApi
             // because our TestApi will likely need to do formatting in
             // order to be truly compatible. Haven't checked yet.
             //'phone' => 'TEXT COLLATE NOCASE',
-            // Same for select, maybe, not sure yet.
-            //'select' => 'TEXT COLLATE NOCASE',
+            // 'select' compares case sensitively on both input and output,
+            // unlike other fields / query parameters.
+            'select' => 'TEXT COLLATE BINARY',
             'integer' => 'INTEGER NOT NULL',
             'float' => 'REAL NOT NULL',
-            // For dates it seems best to use TEXT - we'd use INTEGER
-            // and convert to timestamps internally, if Copernica had
-            // any concept of timezones. But since it doesn't / as long
-            // as we don't see that it does, storing the date as text
-            // seems better. After all, that's how we get it in POST /
-            // PUT requests.
+            // For dates it seems best to use TEXT - we'd use INTEGER and
+            // convert to timestamps internally, if Copernica had any concept
+            // of timezones. But since it doesn't / as long as we don't see
+            // that it does, storing the date as text seems better. After all,
+            // that's how we get it in POST / PUT requests. (Note TestApi has a
+            // concept of timezones, but that's 'local' to this class, only so
+            // we don't bake in some dependency by accident.)
             'date' => 'TEXT NOT NULL',
             'datetime' => 'TEXT NOT NULL',
             'empty_date' => 'TEXT',

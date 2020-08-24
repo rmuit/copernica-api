@@ -41,6 +41,9 @@ class TestApiBaseTest extends TestCase
     /**
      * Tests 'normalization' of input values to values we want to store.
      *
+     * Copernica never refuses field values or decides to discard them and take
+     * the field default value; it always converts them to something.
+     *
      * @dataProvider provideDataForNormalizeInputValue
      *
      * @param $destination_field_type
@@ -55,10 +58,13 @@ class TestApiBaseTest extends TestCase
      *   timestamp is also the result of converting whatever date string, using
      *   PHP's default timezone.)
      */
-    public function testNormalizeInputValue($destination_field_type, $input_value, $expected_value)
+    public function testNormalizeInputValue($destination_field_type, $input_value, $expected_value, $struct_value = '')
     {
-        // We don't use 'value' but it's mandatory for integers/floats.
-        $field_struct = ['type' => $destination_field_type, 'value' => '-3'];
+        // 'value' is mandatory for integers/floats. We're not using it.
+        if ($struct_value === '' && in_array($destination_field_type, ['integer', 'float'], true)) {
+            $struct_value = '-4';
+        }
+        $field_struct = ['type' => $destination_field_type, 'value' => $struct_value];
         if (is_array($expected_value)) {
             // This is expected to be a date expression + format. We need to
             // convert it at the last minute because
@@ -103,6 +109,7 @@ class TestApiBaseTest extends TestCase
         // as a test, for some overview.
         $data = [
             ['text', 'value', 'value'],
+            ['text', '  value ', '  value '],
             ['text', true, '1'],
             ['text', false, ''],
             ['text', 0, '0'],
@@ -114,6 +121,7 @@ class TestApiBaseTest extends TestCase
             // Email field is not checked for valid e-mail. (The UI does that,
             // the REST API doesn't.) It's treated the same as string.
             ['email', 'value', 'value'],
+            ['email', '  value ', '  value '],
             ['email', true, '1'],
             ['email', false, ''],
             ['email', 0, '0'],
@@ -121,7 +129,32 @@ class TestApiBaseTest extends TestCase
             ['email', 2.99, '2.99'],
             ['email', -2.99, '-2.99'],
             ['email', ['any-kind-of-array'], ''],
+            // Select fields only accept specific strings and convert all else
+            // to "".
+            // Values with leading/trailing spaces can be added through the UI,
+            // and will then show up as-is in the field's 'value' property.
+            // @todo: test that the API calls for adding/changing fields work
+            //   the same, once we add them. We assume they do.
+            // Apparently these values (the choides) are stripped of trailing
+            // spaces, but not leading spaces, before being used. Input for
+            // (sub)profile field values is not trimmed before being compared.
+            // This follows from:
+            // - Duplicate values with trailing spaces (e.g. "x" and "x ") do
+            //   not show up as separate choices in the Copernica UI.
+            // - Duplicate values with leading spaces do; "x" and " x" leads to
+            //   a select element showing (visibly) two choices of "x".
+            // - A select field whose 'value' is "x\r\n x\r\n`x " will accept
+            //   "x" and " x" as input, but "x " will be converted to "". In
+            //   other words, values with trailing spaces are never accepted.
+            ['select', 'value1', 'value1', "value1\r\nvalue2"],
+            ['select', 'value1', '', "VALUE1\r\nvalue2"],
+            ['select', 'value', '', "value1\r\nvalue2"],
+            ['select', 'value ', '', "value \r\n value\r\n`value"],
+            ['select', ' value', ' value', "value \r\n value\r\n`value"],
+            ['select', true, '1', "value\r\n1"],
+            ['select', true, '', "value\r\n"],
             ['integer', 'value', 0],
+            ['integer', '   3 ', 3],
             ['integer', 'true', 0],
             ['integer', true, 1],
             ['integer', false, 0],
@@ -130,6 +163,7 @@ class TestApiBaseTest extends TestCase
             ['integer', -2.99, -2],
             ['integer', ['any-kind-of-array'], 1],
             ['float', 'value', 0.0],
+            ['float', ' 2.99  ', 2.99],
             ['float', 'true', 0.0],
             ['float', true, 1.0],
             ['float', false, 0.0],
@@ -148,7 +182,7 @@ class TestApiBaseTest extends TestCase
         // 'datetime' fields and "0000-00-00" for 'date' fields.
         $dates1 = [
             ['2020-01-02 03:04:05', '2020-01-02 03:04:05'],
-            ['2020-01-02t03:04:05', '2020-01-02 03:04:05'],
+            ['  2020-01-02t03:04:05  ', '2020-01-02 03:04:05'],
             ['2020-01-02t03:04:05.987654', '2020-01-02 03:04:05'],
             ['2020-01-02 03:4', '2020-01-02 03:04:00'],
             ['2020-01-02 03:', ''],

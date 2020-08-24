@@ -518,10 +518,9 @@ class ApiBehaviorTest extends TestCase
         // @todo still make test for limit <= 0, start.
         //   Maybe we should just make loops to go through some of these, so we
         //   still see what we're doing.
-        // @todo still test orderby and more conditions, including multiple
-        //   conditions for the same field. We'll need more data for that.
-        //   Likely first test defaults for all types, per above.
-        //   (Or maybe after some PUTting including batch PUTting)
+        // @todo still test orderby and multiple conditions for the same field.
+        //   We'll need more data for that. Likely first test defaults for all
+        //   types, per above.
         $result = $api->get("database/$database_id/profiles/$profile_id", ['fields' => false, 2 => 4, 'bogus' => 345, 'total' => 'TRue']);
         $this->assertSame($expected_profiles, $result);
         $result = $api->get("database/$database_id/profiles/bogus/path", ['fields' => 'nothing', 'total' => []]);
@@ -538,6 +537,7 @@ class ApiBehaviorTest extends TestCase
             ['start' => 0, 'limit' => 1, 'count' => 1, 'data' => [$expected_profiles['data'][1]], 'total' => 2],
             $result
         );
+        // Filtering on multiple conditions, empty fields: see after put.
 
         // Test the output of getting a single profile; see that it's equal.
         $this->assertSame($expected_profiles['data'][0], $api->get("profile/$profile_id"));
@@ -576,15 +576,17 @@ class ApiBehaviorTest extends TestCase
         $result = $this->executePut($api, "profile/$profile3_id", ['fields' => ['ANumber' => -1.9, 'notafield' => 100], 'create' => true]);
         $this->assertSame("profile/$profile3_id", $result);
         $this->assertSame($expected_profiles['data'][2], $api->get("profile/$profile3_id"));
-        // Field can be emptied out, 'modified' changes: (Also, secret can be
-        // emptied out.)
+        // Field can be emptied out - including an integer field, which then
+        // changes to 0 (not to the default); 'modified' changes. (Also, secret
+        // can be emptied out.)
         sleep(1);
-        $result = $this->executePut($api, "profile/$profile_id", ['fields' => ['lastName' => 'ignored', 'lastNAME' => ''], 'secret' => '']);
+        $result = $this->executePut($api, "profile/$profile_id", ['fields' => ['lastName' => 'ignored', 'lastNAME' => '', 'ANumber' => null], 'secret' => '']);
         $this->assertSame("profile/$profile_id", $result);
         $result = $api->get("profile/$profile_id");
         $this->assertNotSame($expected_profiles['data'][0]['modified'], $result['modified']);
         $expected_profiles['data'][0]['modified'] = $result['modified'];
         $expected_profiles['data'][0]['fields']['LastName'] = '';
+        $expected_profiles['data'][0]['fields']['ANumber'] = '0';
         $expected_profiles['data'][0]['secret'] = '';
         $this->assertSame($expected_profiles['data'][0], $result);
         // Same for profile/PID/field resource:
@@ -598,6 +600,14 @@ class ApiBehaviorTest extends TestCase
         $expected_profiles['data'][1]['modified'] = $result['modified'];
         $expected_profiles['data'][1]['fields']['LastName'] = '';
         $this->assertSame($expected_profiles['data'][1], $result);
+
+        // Filtering on empty values should work (for both numbers and strings).
+        $result = $api->get("database/$database_id/profiles", ['fields' => ['LASTNAME==', 'ANumber==']]);
+        $this->assertSame(
+            ['start' => 0, 'limit' => 100, 'count' => 1, 'data' => [$expected_profiles['data'][0]], 'total' => 1],
+            $result
+        );
+
         // @TODO POST profile/ID(/fields) probably does the same as PUT in the
         //   live API. Even though this is not officially documented, we
         //   probably want to make TestApi mirror this, and make tests as a
