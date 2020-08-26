@@ -2,9 +2,9 @@
 
 namespace CopernicaApi\Tests;
 
+use CopernicaApi\CopernicaHelper;
 use DateTime;
 use DateTimeZone;
-use Exception;
 use InvalidArgumentException;
 use PDO;
 use LogicException;
@@ -52,11 +52,6 @@ use UnexpectedValueException;
 class TestApi
 {
     /**
-     * See $timezone.
-     */
-    const TIMEZONE_DEFAULT = 'Europe/Amsterdam';
-
-    /**
      * Field types that are allowed to occur in the databases structure.
      *
      * This is not the single authoritative value; it's for
@@ -96,21 +91,6 @@ class TestApi
      * @var bool
      */
     public $invalidToken;
-
-    /**
-     * Timezone which the fake API backend seems to operate in.
-     *
-     * This influences e.g. "created" times, which are strings without timezone
-     * expression. Empty means "take PHP's default timezone setting". Some code
-     * uses a constant value instead because... 1) it turns out we can't make
-     * it dynamic in all cases; 2) we don't even know if it makes sense to make
-     * it dynamic because we don't know if the live API has a configurable
-     * timezone. If it turns out that it does, we'll have some rewriting to do
-     * of the code that uses the constant.
-     *
-     * @var string
-     */
-    protected $timezone = self::TIMEZONE_DEFAULT;
 
     /**
      * Test database connection.
@@ -170,205 +150,6 @@ class TestApi
      * @var string[]
      */
     protected $apiUpdateLog = [];
-
-    /**
-     * Normalizes an input value.
-     *
-     * The Copernica API basically never returns an error for unknown field
-     * input for e.g. profiles; it just converts unknown types/values. This
-     * code grew out of testing those conversions against the live API and
-     * recreating the apparent specs. (Though in recreating it, it turns out
-     * maybe the live API code wasn't designed around specs, but was just made
-     * to do e.g. "whatever code like PHP strtotime() does" including all the
-     * strangeness. See the unit test serving as a reverse engineered spec.)
-     *
-     * Of course we don't know for sure whether the live API stores the values
-     * literally as converted here (because we only know the values it outputs)
-     * but it's likely, given some other behavior re. defaults/required fields.
-     * The only difference between how we store things (and how we are guessing
-     * the live API stores things) and the output is, we store numbers as
-     * numeric values (while they're always output as strings).
-     *
-     * This is a static method in order to be better testable (by a unit test)
-     * and also to be usable by other (functional / higher level) tests.
-     *
-     * The best specification of how Copernica behaves w.r.t. accepting /
-     * changing field input is the combination of comments in this method and
-     * the data provider for the unit test.
-     *
-     * @param mixed $value
-     *   An input value.
-     * @param array $field_struct
-     *   A field structure which at a minimum needs a valid 'type' property.
-     * @param string $timezone
-     *   (Optional) timezone in case we're formatting dates and somehow need a
-     *   nonstandard timezone. (Applicability unknown.)
-     *
-     * @return mixed
-     *   The normalized value.
-     *
-     * @see \CopernicaApi\Tests\TestApiBaseTest::provideDataForNormalizeInputValue()
-     */
-    public static function normalizeInputValue($value, array $field_struct, $timezone = self::TIMEZONE_DEFAULT)
-    {
-        static::normalizeFieldStructure($field_struct);
-
-        switch ($field_struct['type']) {
-            // Email field is not checked for valid e-mail. (The UI does that,
-            // the REST API doesn't.) It's treated the same as string re. above
-            // conversion.
-            case 'email':
-            case 'text':
-                if (is_scalar($value)) {
-                    // Convert to string. Boolean becomes "1" / "".
-                    $value = (string) $value;
-                } else {
-                    // Other values are not ignored (because they don't
-                    // become the default value for the field on inserting);
-                    // they're explicitly "".
-                    $value = '';
-                }
-                break;
-
-            case 'select':
-                // Only let the value pass if the string equivalent (e.g. "1"
-                // for true) is contained in the allowed values, matching case
-                // sensitively (unlike other fields). If not, the value becomes
-                // empty string. (It makes no difference if the empty string is
-                // among the explicitly configured values.) Right trim choices,
-                // not the value itself (which leads to values with leading
-                // spaces always being discarded).
-                $choices = array_map('rtrim', explode("\r\n", $field_struct['value']));
-                if (is_scalar($value) && in_array((string)$value, $choices, true)) {
-                    $value = (string)$value;
-                } else {
-                    // Other values are not ignored (because they don't
-                    // become the default value for the field on inserting);
-                    // they're explicitly "".
-                    $value = '';
-                }
-                break;
-
-            case 'integer':
-                // All non-empty arrays become 1, strings (including "true")
-                // become 0.
-                $value = (int) $value;
-                break;
-
-            case 'float':
-                // Same as integer.
-                $value = (float) $value;
-                break;
-
-            case 'date':
-            case 'datetime':
-            case 'empty_date':
-            case 'empty_datetime':
-                // It seems that Copernica is using strtotime() internally. We
-                // use DateTime objects so we can also work well if our PHP is
-                // not configured for the same timezone as Copernica is. A
-                // difference is: new DateTime(''/false) is a valid expression
-                // but strtotime('') is not.
-                if ($value !== '' && $value !== false) {
-                    // DateTime is finicky when working in the non-default
-                    // timezone: if the date/time expression does not contain a
-                    // timezone component, we must pass a timezone object into
-                    // the constructor to make it unambiguous (because we don't
-                    // want it to be interpreted in the context of PHP's
-                    // default timezone) - and this timezone also gets used for
-                    // output. But if the expression does contain a timezone
-                    // component, the timezone argument gets completely ignored
-                    // so we have to explicitly set the timezone afterwards in
-                    // order to get the right output.
-                    $tz_obj = new DateTimeZone($timezone ?: date_default_timezone_get());
-                    try {
-                        $date = new DateTime($value, $tz_obj);
-                        $date->setTimezone($tz_obj);
-                        if (substr($field_struct['type'], -4) === 'date') {
-                            $value = $date->format('Y-m-d');
-                        } else {
-                            $value = $date->format('Y-m-d H:i:s');
-                        }
-                    } catch (\Exception $e) {
-                        $value = '';
-                    }
-                }
-                if ($value === '' || $value === false) {
-                    if ($field_struct['type'] === 'date') {
-                        $value = '0000-00-00';
-                    } elseif ($field_struct['type'] === 'datetime') {
-                        $value = '0000-00-00 00:00:00';
-                    } else {
-                        $value = '';
-                    }
-                }
-        }
-
-        return $value;
-    }
-
-    /**
-     * Normalizes an input value to be able to be used as 'secret'.
-     *
-     * This is made static primarily because it fits with normalizeInputValue().
-     *
-     * @param mixed $value
-     *   An input value.
-     *
-     * @return string
-     *   A string, as it would be converted by the live API.
-     */
-    public static function normalizeSecret($value)
-    {
-        if (isset($value) && is_scalar($value)) {
-            // Convert non-ASCII to question marks. I think this approximates
-            // well enough (if not equals) what the live API is doing.
-            $value = mb_convert_encoding($value, "ASCII");
-        } else {
-            $value = '1';
-        }
-
-        return $value;
-    }
-
-    /**
-     * Checks and reformats the structure for a database/collection field.
-     *
-     * @param array $field
-     *   The field structure. Passed by reference to be easier on the caller.
-     *   Checks for array-ness and ID/name are done elsewhere and are assumed
-     *   to be done already.
-     */
-    protected static function normalizeFieldStructure(array &$field)
-    {
-        if (empty($field['type'])) {
-            throw new RuntimeException("Field has no 'type' set.");
-        }
-        if (!is_string($field['type']) || !isset(static::$allowedFieldTypes[$field['type']])) {
-            throw new RuntimeException('Unknown field type ' . json_encode($field['type']) . '.');
-        }
-
-        if (in_array($field['type'], ['integer', 'float'], true)) {
-            if (!isset($field['value'])) {
-                throw new RuntimeException("Integer/float field has no 'value' set. Copernica requires this.");
-            }
-            $is_num = $field['type'] === 'float' ? is_numeric($field['value'])
-                : filter_var($field['value'], FILTER_VALIDATE_INT);
-            if ($is_num === false) {
-                throw new RuntimeException("Integer/float field has an illegal 'value' property.");
-            }
-        } elseif (isset($field['value']) && !is_string($field['value'])) {
-            throw new RuntimeException("{$field['type']} field has a non-string 'value' property.");
-        }
-        if (isset($field['value']) && is_int($field['value'])) {
-            // We don't know why, but Copernica always returns string values
-            // also for the default values for integer/float fields. If this
-            // becomes an issue internally (e.g. with populating field values)
-            // then we should amend the output for the 'databases' API call
-            // instead.
-            $field['value'] = (string)$field['value'];
-        }
-    }
 
     /**
      * TestApi constructor.
@@ -993,25 +774,23 @@ class TestApi
     }
 
     /**
-     * Gets the timezone used for converting datetime expressions.
+     * Gets the timezone which the fake API backend seems to operate in.
+     *
+     * This influences e.g. "created" times, which are strings without timezone
+     * expression.
+     *
+     * We've been going back and forth about making this configurable. At the
+     * moment, the setter is gone and this returns a constant (which is in a
+     * non-test class, so we'll need to figure out what we want, if we change
+     * that. Note this class is using CopernicaHelper::normalizeInputValue()
+     * which uses that constant).
      *
      * @return string
      *   A valid timezone name, or '' meaning PHP's default timezone setting.
      */
     public function getTimezone()
     {
-        return $this->timezone;
-    }
-
-    /**
-     * Sets the timezone used for converting datetime expressions.
-     *
-     * @param string
-     *   A valid timezone name, or '' to use PHP's default timezone setting.
-     */
-    public function setTimezone($timezone)
-    {
-        $this->timezone = $timezone;
+        return CopernicaHelper::TIMEZONE_DEFAULT;
     }
 
     /**
@@ -1738,7 +1517,7 @@ class TestApi
                 throw new LogicException("TestApi does not implement 'interests' for {$this->currentMethod} {$this->currentResource} yet.");
             }
             if (isset($data['secret'])) {
-                $secret = static::normalizeSecret($data['secret']);
+                $secret = CopernicaHelper::normalizeSecretInput($data['secret']);
             }
             // Unlike POST and PUT /database/ID/profiles, an illegal 'fields'
             // array does not generate an error.
@@ -1863,7 +1642,7 @@ class TestApi
             // Possible data: 'fields' and 'secret'. Others are ignored; a 303
             // response is returned.
             if (isset($data['secret'])) {
-                $secret = static::normalizeSecret($data['secret']);
+                $secret = CopernicaHelper::normalizeSecretInput($data['secret']);
             }
             // Unlike POST and PUT /database/ID/profiles, an illegal 'fields'
             // array does not generate an error.
@@ -2104,7 +1883,7 @@ class TestApi
                 // can be skipped because they're already strings (and are not
                 // supposed to be trimmed).
                 $string_type = !in_array($field_struct['type'], ['integer', 'float', 'date', 'datetime', 'empty_date', 'empty_datetime'], true);
-                $value = $string_type ? $matches[3] : static::normalizeInputValue($matches[3], $field_struct, $this->getTimezone());
+                $value = $string_type ? $matches[3] : CopernicaHelper::normalizeInputValue($matches[3], $field_struct);
                 switch ($matches[2]) {
                     case '==':
                         $operator = '=';
@@ -2355,7 +2134,7 @@ class TestApi
         }
         return $date->format('Y-m-d H:i:s');
     }
-    
+
     /**
      * Strips nonexistent fields and normalizes the values as the API does.
      *
@@ -2385,7 +2164,7 @@ class TestApi
             if (isset($fields[$field_name])) {
                 $field_struct = $fields[$field_name];
                 // Use the non-lowercased real fieldname as key.
-                $normalized[$field_struct['name']] = static::normalizeInputValue($value, $field_struct, $this->getTimezone());
+                $normalized[$field_struct['name']] = CopernicaHelper::normalizeInputValue($value, $field_struct);
             }
         }
 
@@ -2738,7 +2517,7 @@ class TestApi
             if (isset($database['fields'])) {
                 $database['fields'] = $this->transformKeys($database['fields'], "field_$db_id", "field_name_$db_id");
                 foreach ($database['fields'] as &$field) {
-                    static::normalizeFieldStructure($field);
+                    $this->normalizeFieldStructure($field);
                 }
                 unset($field);
             }
@@ -2748,7 +2527,7 @@ class TestApi
                     if (isset($collection['fields'])) {
                         $collection['fields'] = $this->transformKeys($collection['fields'], "field_$db_id", "field_name_$db_id.$coll_id");
                         foreach ($database['fields'] as &$field) {
-                            static::normalizeFieldStructure($field);
+                            $this->normalizeFieldStructure($field);
                         }
                         unset($field);
                     }
@@ -2762,6 +2541,45 @@ class TestApi
     // @todo in the return values from the /databases (and other) API calls,
     //   stringify all the ID & database fields, just to be as equal as possible
     //   with the standard class. (Done for profile, profiles, subprofiles.)
+
+    /**
+     * Checks and reformats the structure for a database/collection field.
+     *
+     * @param array $field
+     *   The field structure. Passed by reference to be easier on the caller.
+     *   Checks for array-ness and ID/name are done elsewhere and are assumed
+     *   to be done already.
+     */
+    protected function normalizeFieldStructure(array &$field)
+    {
+        if (empty($field['type'])) {
+            throw new RuntimeException("Field has no 'type' set.");
+        }
+        if (!is_string($field['type']) || !isset(static::$allowedFieldTypes[$field['type']])) {
+            throw new RuntimeException('Unknown field type ' . json_encode($field['type']) . '.');
+        }
+
+        if (in_array($field['type'], ['integer', 'float'], true)) {
+            if (!isset($field['value'])) {
+                throw new RuntimeException("Integer/float field has no 'value' set. Copernica requires this.");
+            }
+            $is_num = $field['type'] === 'float' ? is_numeric($field['value'])
+                : filter_var($field['value'], FILTER_VALIDATE_INT);
+            if ($is_num === false) {
+                throw new RuntimeException("Integer/float field has an illegal 'value' property.");
+            }
+        } elseif (isset($field['value']) && !is_string($field['value'])) {
+            throw new RuntimeException("{$field['type']} field has a non-string 'value' property.");
+        }
+        if (isset($field['value']) && is_int($field['value'])) {
+            // We don't know why, but Copernica always returns string values
+            // also for the default values for integer/float fields. If this
+            // becomes an issue internally (e.g. with populating field values)
+            // then we should amend the output for the 'databases' API call
+            // instead.
+            $field['value'] = (string)$field['value'];
+        }
+    }
 
     /**
      * Checks whether data has/is a 'metadata wrapper', and removes it if so.

@@ -2,6 +2,7 @@
 
 namespace CopernicaApi\Tests;
 
+use CopernicaApi\CopernicaHelper;
 use DateTime;
 use DateTimeZone;
 use LogicException;
@@ -1156,7 +1157,7 @@ class ApiBehaviorTest extends TestCase
         } else {
             // We don't know the timezone used by the real API and we don't
             // know if there's even a setting. Take our default.
-            $timezone = TestApi::TIMEZONE_DEFAULT;
+            $timezone = CopernicaHelper::TIMEZONE_DEFAULT;
         }
         $date->setTimezone(new DateTimeZone($timezone));
         return $date;
