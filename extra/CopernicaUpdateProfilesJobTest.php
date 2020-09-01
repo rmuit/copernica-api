@@ -63,7 +63,7 @@ if (!function_exists('t')) {
 
 if (!function_exists('__drunkins_log')) {
     // Replace $args into $string. (Original function is for translation.)
-    function __drunkins_log($job_id, $message, array $variables, $severity, array $settings, $repeat = NULL)
+    function __drunkins_log($job_id, $message, array $variables, $severity, array $settings, $repeat = null)
     {
         if (isset($GLOBALS['drunkins_log_test_threshold'])
             && is_numeric($GLOBALS['drunkins_log_test_threshold'])
@@ -149,14 +149,367 @@ class CopernicaUpdateProfilesJobTest extends TestCase
     const TOKEN = 'MyTestToken';
 
     /**
-     * Tests getItemKeyFieldValue(). (One of few real unit testable methods.)
+     * Returns some reusable field settings.
+     */
+    private function getFieldSettings($get_field_names_to_test = false)
+    {
+        $settings = [
+            'myName' => 'text',
+            'myNameIns' => ['type' => 'text', 'compare_case_insensitive' => true],
+            'myEmail' => 'email',
+            'myEmailIns' => ['type' => 'email', 'compare_case_insensitive' => true],
+            // We'll assume that 'zero_can_overwrite' only applies to integer /
+            // float. (We don't know a practical application of resetting it to
+            // False for float, but hwy. It's possible.)
+            'myInt' => 'integer',
+            'myId' => ['type' => 'integer', 'zero_can_overwrite' => false],
+            'myFloat' => 'float',
+            'myNonZeroFloat' => ['type' => 'float', 'zero_can_overwrite' => false],
+            'myDate' => 'date',
+            'myDateEmpty' => 'empty_date',
+            'myDateTime' => 'datetime',
+            'myDateTimeEmpty' => 'empty_datetime',
+        ];
+        if ($get_field_names_to_test) {
+            // We also need to return an undefined field name among all the
+            // fields to test - because defining fields is opotional.
+            $settings = array_merge(['myUnknownTypeField'], array_keys($settings));
+        }
+
+        return $settings;
+    }
+
+    /**
+     * Tests a series of fields for emptiness of a value.
+     *
+     * Contains a hack so that we can reuse this for 'equality' testing too.
+     */
+    private function doTestEmpty($test_value, array $supposed_empty_fields, $value_is_new_value = null)
+    {
+        if (empty($GLOBALS['test_equality_instead_of_emptiness'])) {
+            $job = $this->getJobWithAccessibleMethods(['copernica_field_settings' => $this->getFieldSettings()]);
+            // For completeness, test both true and false for the third
+            //  argument, unless it was explicitly specified.
+            $loggable = var_export($test_value, true);
+            if ($value_is_new_value === null || empty($value_is_new_value)) {
+                foreach ($supposed_empty_fields as $field_name) {
+                    $this->assertTrue($job->isFieldValueEmptyTest($test_value, $field_name, false), "isFieldValueEmpty($loggable, '$field_name', false) should be TRUE.");
+                }
+                // All fields except the ones specified should be non-empty.
+                foreach (array_diff($this->getFieldSettings(true), $supposed_empty_fields) as $field_name) {
+                    $this->assertFalse($job->isFieldValueEmptyTest($test_value, $field_name, false), "isFieldValueEmpty($loggable, '$field_name', false) should be FALSE.");
+                }
+            }
+            if ($value_is_new_value === null || !empty($value_is_new_value)) {
+                foreach ($supposed_empty_fields as $field_name) {
+                    $this->assertTrue($job->isFieldValueEmptyTest($test_value, $field_name, true), "isFieldValueEmpty($loggable, '$field_name', true) should be TRUE.");
+                }
+                foreach (array_diff($this->getFieldSettings(true), $supposed_empty_fields) as $field_name) {
+                    $this->assertFalse($job->isFieldValueEmptyTest($test_value, $field_name, true), "isFieldValueEmpty($loggable, '$field_name', true) should be FALSE.");
+                }
+            }
+        } elseif ($value_is_new_value !== true) {
+            // Dirty hack in action: do essentially the same tests (specified
+            // by testIsFieldValueEmpty()), but test isFieldValueEqual. The
+            // special isFieldValueEmpty() $value_is_new_value=true 'hack' does
+            // not apply here, so we're skipping that.
+            if ($GLOBALS['test_equality_instead_of_emptiness'] === 'updatability') {
+                // Uhm actually, test updatability instead of equality.
+                $this->doTestUpdatable($test_value, '', array_diff($this->getFieldSettings(true), $supposed_empty_fields));
+            } else {
+                $this->doTestEqual($test_value, '', $supposed_empty_fields);
+                $this->doTestEqual($test_value, null, $supposed_empty_fields);
+            }
+        }
+    }
+
+    /**
+     * Tests a series of fields for equality of values.
+     */
+    private function doTestEqual($test_value1, $test_value2, array $supposed_equal_fields)
+    {
+        $job = $this->getJobWithAccessibleMethods(['copernica_field_settings' => $this->getFieldSettings()]);
+
+        $loggable1 = var_export($test_value1, true);
+        $loggable2 = var_export($test_value2, true);
+        foreach ($supposed_equal_fields as $field_name) {
+            // Test both ways, which should make no difference, because we can.
+            $this->assertTrue($job->isFieldValueEqualTest($test_value1, $test_value2, $field_name), "isFieldValueEqual($loggable1, $loggable2, '$field_name') should be TRUE.");
+            $this->assertTrue($job->isFieldValueEqualTest($test_value2, $test_value1, $field_name), "isFieldValueEqual($loggable2, $loggable1, '$field_name') should be TRUE.");
+        }
+        foreach (array_diff($this->getFieldSettings(true), $supposed_equal_fields) as $field_name) {
+            $this->assertFalse($job->isFieldValueEqualTest($test_value1, $test_value2, $field_name), "isFieldValueEqual($loggable1, $loggable2, '$field_name') should be FALSE.");
+            $this->assertFalse($job->isFieldValueEqualTest($test_value2, $test_value1, $field_name), "isFieldValueEqual($loggable2, $loggable1, '$field_name') should be FALSE.");
+        }
+    }
+
+    /**
+     * Tests a series of fields for 'updatability' of a value.
+     *
+     * @param mixed $new_value
+     *   The value that possibly should be updated in Copernica
+     * @param mixed $existing_value
+     *   The value inside the fields. This is always a string in a Copernica
+     *   object but might be something else if the object was cached.
+     * @param array $supposed_updatable_fields
+     *   The subset of fields which should be updatable to $new_value if their
+     *   current value is $existing_value.
+     * @param array $extra_job_settings
+     *   Extra settings to initialize the job class with.
+     */
+    private function doTestUpdatable($new_value, $existing_value, array $supposed_updatable_fields, array $extra_job_settings = [])
+    {
+        $job = $this->getJobWithAccessibleMethods($extra_job_settings + ['copernica_field_settings' => $this->getFieldSettings()]);
+
+        $loggable1 = var_export($existing_value, true);
+        $loggable2 = var_export($new_value, true);
+        foreach ($supposed_updatable_fields as $field_name) {
+            // Prepopulate fake item with existing value. We'll treat NULL as
+            // "field does not exist" and assume "field exists with value NULL"
+            // does not need to be tested explicitly.
+            $fake_profile = ['fields' => isset($existing_value) ? [$field_name => $existing_value] : []];
+            $this->assertTrue($job->shouldUpdateTest($new_value, $fake_profile, $field_name), "Field $field_name should be updatable from $loggable1 to $loggable2.");
+        }
+        foreach (array_diff($this->getFieldSettings(true), $supposed_updatable_fields) as $field_name) {
+            $fake_profile = ['fields' => isset($existing_value) ? [$field_name => $existing_value] : []];
+            $this->assertFalse($job->shouldUpdateTest($new_value, $fake_profile, $field_name), "Field $field_name should not be updatable from $loggable1 to $loggable2.");
+        }
+    }
+
+    /**
+     * Tests isFieldValueEmpty().
+     *
+     */
+    public function testIsFieldValueEmpty()
+    {
+        // Explicitly testing all unimportant details could serve as a good
+        // specification / reference, so let's do it.
+        $all_testable_fields = $this->getFieldSettings(true);
+        // All non-number/date fields are 'treated as strings'. (And all values
+        // except ''/null are nonempty for those fields.)
+        $number_fields = ['myInt', 'myId', 'myFloat', 'myNonZeroFloat'];
+        $date_fields = ['myDate', 'myDateEmpty', 'myDateTime', 'myDateTimeEmpty'];
+
+        // Empty string / null / false are always considered empty; ''
+        // figures because Copernica always returns empty string (not null)
+        // in REST API responses, for empty fields, where needed.
+        $this->doTestEmpty('', $all_testable_fields);
+        $this->doTestEmpty(null, $all_testable_fields);
+        $this->doTestEmpty(false, $all_testable_fields);
+        // A single space: nonempty for 'string' fields / all others are empty.
+        $this->doTestEmpty(' ', array_merge($number_fields, $date_fields));
+
+        // Zero: ...here is where some weirdness comes in: emptiness of item
+        // fields is not always the same as in Copernica - not if
+        // 'zero_can_overwrite' is true (which is set in the constructor
+        // for integer/float):
+        $this->doTestEmpty(0, array_merge($number_fields, $date_fields), false);
+        $this->doTestEmpty('0', array_merge($number_fields, $date_fields), false);
+        // So 0 is nonempty when being inserted into 'myInt/myFloat' but empty
+        // when being inserted to 'myId' (or the equivalent float).
+        $this->doTestEmpty(0, array_merge(['myId', 'myNonZeroFloat'], $date_fields), true);
+        $this->doTestEmpty('0', array_merge(['myId', 'myNonZeroFloat'], $date_fields), true);
+
+        // 1: can't be converted to date, so empty for dates.
+        $this->doTestEmpty(1, $date_fields);
+
+        // Random strings: always empty for 'number' fields; whether they
+        // are empty for date fields, depends on... strtotime() logic
+        // which we don't really know about. Dates are nonempty for 'a' (which
+        // is 'now' in military timezone Alpha), but empty (invalid) for 'aa':
+        $this->doTestEmpty('a', $number_fields);
+        $this->doTestEmpty('aa', array_merge($number_fields, $date_fields));
+
+        // Legal dates are non-empty for all fields.
+        $this->doTestEmpty('1900-01-01 00:00', []);
+        // Most illegal date expressions convert to numbers (1900), except the
+        // rest of the edge cases that start with 0000.
+        $this->doTestEmpty('1900-01-001 00:00', $date_fields);
+        // Some edge cases of dates may be unexpected:
+        // 0000-00-00 is empty because it converts to the 'empty' value for all
+        // dates. regardless of the time specification.
+        $this->doTestEmpty('0000-00-00', array_merge($number_fields, $date_fields));
+        $this->doTestEmpty('0000-00-00 23:59:59', array_merge($number_fields, $date_fields));
+        // 0000-00-01 00:00:00, on the other hand, is not empty - it, and all
+        // date specifications that are 'legal' for strtotime() but would
+        // result in a negative year number, convert to "0000-00-00"... which
+        // is _not the empty value_ for empty_date(time) fields.
+        $this->doTestEmpty('0000-00-01', array_merge($number_fields, ['myDate', 'myDateTime']));
+        $this->doTestEmpty('0000-00-01 00:00', array_merge($number_fields, ['myDate', 'myDateTime']));
+        // Illegal dates (which strtotime() does not recognize) are empty.
+        $this->doTestEmpty('0000-00-01 00:00:', array_merge($number_fields, $date_fields));
+
+        // True: is empty for dates. Arrays: empty for dates and strings -
+        // because that's how Copernica treats them - but: not empty for
+        // unknown field types.
+        $this->doTestEmpty(['any-nonempty-array'], array_diff($all_testable_fields, $number_fields, ['myUnknownTypeField']));
+        $this->doTestEmpty([], array_diff($all_testable_fields, ['myUnknownTypeField']));
+        $this->doTestEmpty(true, $date_fields);
+    }
+
+    /**
+     * Tests getCopernicaFieldSettings().
+     *
+     * Implicit dependencies are messed up to keep the tests small:
+     * isFieldValueEmpty() calls getCopernicaFieldSettings() - but this test
+     * implicitly depends on testIsFieldValueEmpty() / assumes it succeeds, so
+     * that we only have to test one small aspect of getCopernicaFieldSettings()
+     * which isn't in testIsFieldValueEmpty() because it doesn't fit with the
+     * array diffing/merging: case sensitivity of the field names.
+     */
+    public function testGetCopernicaFieldSettings()
+    {
+        $job = $this->getJobWithAccessibleMethods(['copernica_field_settings' => $this->getFieldSettings()]);
+        // See testIsFieldValueEmpty(): 0000-00-01 is nonempty for almost all
+        // fields (including e.g. myDateEmpty) but empty for myDate. If this
+        // correctly asserts True, that means it matches case as needed.
+        $this->assertTrue($job->isFieldValueEmptyTest('0000-00-01', 'MyDATE'));
+    }
+
+    /**
+     * Tests isFieldValueEqual().
+     *
+     * We test all combinations of values + field types against each other,
+     * even for values + field types that don't really match, because:
+     * - it makes tests more readable (by calling one helper function)
+     * - the value may be stored in a cached item that doesn't come literally
+     *   from Copernica, in which case it could be anything.
+     */
+    public function testIsFieldValueEqual()
+    {
+        // First of all, "equality with ''" should be the same as "emptiness".
+        // This is clear from the code, but the code might change and we should
+        // ideally test for that... and the best way to do this is to replicate
+        // the exact tests which we're doing in testIsFieldValueEmpty(). We
+        // introduce a dirty hack in doTestEmpty() to make this possible, which
+        // is arguably better than duplicating code.
+        $GLOBALS['test_equality_instead_of_emptiness'] = true;
+        $this->testIsFieldValueEmpty();
+        unset($GLOBALS['test_equality_instead_of_emptiness']);
+
+        $all_testable_fields = $this->getFieldSettings(true);
+        $number_fields = ['myInt', 'myId', 'myFloat', 'myNonZeroFloat'];
+        $date_fields = ['myDate', 'myDateEmpty', 'myDateTime', 'myDateTimeEmpty'];
+        $string_fields = ['myUnknownTypeField', 'myName', 'myNameIns', 'myEmail', 'myEmailIns'];
+
+        // String against string: differing case is unequal for 'normal'
+        // string fields. Equal for 'case insensitive' string fields & others.
+        $this->doTestEqual('a', 'a', $all_testable_fields);
+        $this->doTestEqual('a', 'A', array_diff($all_testable_fields, ['myName', 'myEmail', 'myUnknownTypeField']));
+
+        // Zeroes: unequal to '' for string fields. Equal for others. (We do
+        // this because it's significant. But actually it's the same as testing
+        // doTestEmpty('0'). We won't test everything against '' again below.)
+        $this->doTestEqual('0', '', array_merge($number_fields, $date_fields));
+        $this->doTestEqual(0, '', array_merge($number_fields, $date_fields));
+
+        // Test some strange values against each other. Admittedly this largely
+        // duplicates normalizeInputValue(), but it's a more concise 'spec'. We
+        // won't do an exhaustive comparison of weird date formats though; no
+        // need to totally duplicate normalizeInputValue() /
+        // testIsFieldValueEmpty().
+        //
+        // False always == '' (because it's empty). So 0 != false for strings;
+        // basically the same as 0 != '', just above.
+        $this->doTestEqual(0, false, array_merge($number_fields, $date_fields));
+        // Zeroes are equal to strings for number fields. For date fields...
+        // that depends on the string. (See testIsFieldValueEmpty().)
+        $this->doTestEqual(0, 'a', $number_fields);
+        $this->doTestEqual(0, 'aa', array_merge($number_fields, $date_fields));
+        $this->doTestEqual([], 0, array_merge($number_fields, $date_fields));
+        // 1 == true for... everything. (Because true is empty for dates, '1'
+        // for strings.)
+        $this->doTestEqual(true, 1, $all_testable_fields);
+        // Nonempty array converts to 1 for numbers, '' for strings; All arrays
+        // (and all booleans, and 1) are empty for dates. So:
+        $this->doTestEqual(['any-nonempty-array'], 1, array_merge($number_fields, $date_fields));
+        $this->doTestEqual(['any-nonempty-array'], false, array_merge(array_diff($string_fields, ['myUnknownTypeField']), $date_fields));
+        $this->doTestEqual([], true, $date_fields);
+        $this->doTestEqual([], false, array_diff($all_testable_fields, ['myUnknownTypeField']));
+    }
+
+    /**
+     * Tests shouldCopernicaFieldBeUpdated().
+     *
+     * We test all combinations of values + field types against each other,
+     * even for values + field types that don't really match, because:
+     * - it makes tests more readable (by calling one helper function)
+     * - the value may be stored in a cached item that doesn't come literally
+     *   from Copernica, in which case it could be anything.
+     * This is all quite similar to testIsFieldValueEqual(), but hey, we should
+     * test what little code is in shouldCopernicaFieldBeUpdated() separately.
+     */
+    public function testShouldCopernicaFieldBeUpdated()
+    {
+        $all_testable_fields = $this->getFieldSettings(true);
+        $number_fields = ['myInt', 'myId', 'myFloat', 'myNonZeroFloat'];
+        $string_fields = ['myUnknownTypeField', 'myName', 'myNameIns', 'myEmail', 'myEmailIns'];
+
+        // First of all, "updatability from ''" should equal "emptiness".
+        // This is clear from the code, but the code might change and we should
+        // ideally test for that... and the best way to do this is to replicate
+        // the exact tests which we're doing in testIsFieldValueEmpty(). We
+        // introduce a dirty hack in doTestEmpty() to make this possible, which
+        // is arguably better than duplicating code.
+        $GLOBALS['test_equality_instead_of_emptiness'] = 'updatability';
+        $this->testIsFieldValueEmpty();
+        unset($GLOBALS['test_equality_instead_of_emptiness']);
+
+        // Zeroes: unequal to '' for string fields. Equal for others. We won't
+        // cycle through all 'strange' values because that will just end up
+        // being a modified testIsFieldValueEqual(), with inverted copies of
+        // the doTestEqual() calls. This means we're largely ignoring "when do
+        // date fields update", which is fine; we can derive that they're OK
+        // from the combination of testIsFieldValueEqual() and the fact that
+        // non-date fields are tested well here.
+        $this->doTestUpdatable('0', '', $string_fields);
+        $this->doTestUpdatable(0, '', $string_fields);
+
+        // String against string: differing case is unequal for 'normal'
+        // string fields. Equal for 'case insensitive' string fields & others.
+        $this->doTestUpdatable('a', 'a', []);
+        $this->doTestUpdatable('a', 'A', ['myName', 'myEmail', 'myUnknownTypeField']);
+        // (Let's not test differing one-character strings here, because
+        // they represent timezones which means it's hard to work out when a
+        // date-without-time field is updatable.)
+        $this->doTestUpdatable('aa', 'bb', $string_fields);
+        // We can't update numeric fields from 2 to 'aa' == 0, because that's
+        // the empty value. We can update them from 'aa' (0) to 2.
+        $this->doTestUpdatable('aa', 2, $string_fields);
+        $this->doTestUpdatable(2, 'aa', array_merge($string_fields, $number_fields));
+        $this->doTestUpdatable(2, 0, array_merge($string_fields, $number_fields));
+        // In contrast, updating to 0 specifically is also possible for
+        // 'default' numeric fields, which don't treat 0 as empty _for an item
+        // value that is being imported_. (Indeed, to repeat: this means that
+        // emptiness of 0 values is treated 'asymetrically' for those fields.)
+        $this->doTestUpdatable(0, 2, array_merge($string_fields, ['myInt', 'myFloat']));
+
+        // If 'prevent_overwrite_profile_fields' is true, no fields are
+        // updatable.
+        $this->doTestUpdatable(3, 2, [], ['prevent_overwrite_profile_fields' => true]);
+        // All fields are updatable from '' (except invalid date expressions
+        // are empty -> not updatable for date fields).
+        $this->doTestUpdatable(3, '', array_merge($string_fields, $number_fields), ['prevent_overwrite_profile_fields' => true]);
+        $this->doTestUpdatable('1900-01-01', '', $all_testable_fields, ['prevent_overwrite_profile_fields' => true]);
+        // And only numbers are updatable from zero. Yes, all numbers, because
+        // by default 0 is not considered empty when being updated from an
+        // item, but it is always empty when in Copernica.
+        $this->doTestUpdatable(3, 0, $number_fields, ['prevent_overwrite_profile_fields' => true]);
+        // Obviously nothing is updtable to 0, just as it wasn't from 2 to 3.
+        $this->doTestUpdatable(0, 3, [], ['prevent_overwrite_profile_fields' => true]);
+    }
+
+    /**
+     * Tests getItemKeyFieldValue().
      */
     public function testGetItemKeyFieldValue()
     {
         // Job with single key_field setting.
-        $job = $this->getJobWithGetItemKeyFieldValueTest(['copernica_profile_key_field' => 'email', 'key_field_validate_email' => true]);
+        $job = $this->getJobWithAccessibleMethods(['copernica_profile_key_field' => 'email', 'key_field_validate_email' => true]);
         $item = ['email' => 'rm@wyz.biz'];
         $value = $job->getItemKeyFieldValueTest($item);
+        $this->assertSame(['email' => 'rm@wyz.biz'], $value);
+        $value = $job->getItemKeyFieldValueTest($item, true, 'until-nonempty');
         $this->assertSame(['email' => 'rm@wyz.biz'], $value);
         $value = $job->getItemKeyFieldValueTest($item, true, 'all');
         $this->assertSame(['email' => 'rm@wyz.biz'], $value);
@@ -171,13 +524,16 @@ class CopernicaUpdateProfilesJobTest extends TestCase
         $value = $job->getItemKeyFieldValueTest($item, false, 0);
         $this->assertSame('invalid@', $value);
         // ...also without validation setting:
-        $job = $this->getJobWithGetItemKeyFieldValueTest(['copernica_profile_key_field' => 'email']);
+        $job = $this->getJobWithAccessibleMethods(['copernica_profile_key_field' => 'email']);
         $value = $job->getItemKeyFieldValueTest($item, true, 0);
         $this->assertSame('invalid@', $value);
         // Test empty e-mail
         $item = ['email' => ''];
+        $this->assertExceptionForGetItemKeyFieldValue($job, $item, true, 'key', UnexpectedValueException::class, "Item does not contain a value for 'email' field(s).");
         $this->assertExceptionForGetItemKeyFieldValue($job, $item, true, 'until-nonempty', UnexpectedValueException::class, "Item does not contain a value for 'email' field(s).");
         $value = $job->getItemKeyFieldValueTest($item, false);
+        $this->assertSame([], $value);
+        $value = $job->getItemKeyFieldValueTest($item, false, 'until-nonempty');
         $this->assertSame(['email' => null], $value);
         $this->assertExceptionForGetItemKeyFieldValue($job, $item, true, 'all', UnexpectedValueException::class, "Item does not contain a value for 'email' field(s).");
         $value = $job->getItemKeyFieldValueTest($item, false, 'all');
@@ -188,9 +544,11 @@ class CopernicaUpdateProfilesJobTest extends TestCase
         $this->assertSame(null, $value);
 
         // Job with key_field being a single-element array: makes no difference.
-        $job = $this->getJobWithGetItemKeyFieldValueTest(['copernica_profile_key_field' => ['email'], 'key_field_validate_email' => true]);
+        $job = $this->getJobWithAccessibleMethods(['copernica_profile_key_field' => ['email'], 'key_field_validate_email' => true]);
         $item = ['email' => 'rm@wyz.biz'];
         $value = $job->getItemKeyFieldValueTest($item);
+        $this->assertSame(['email' => 'rm@wyz.biz'], $value);
+        $value = $job->getItemKeyFieldValueTest($item, true, 'until-nonempty');
         $this->assertSame(['email' => 'rm@wyz.biz'], $value);
         $value = $job->getItemKeyFieldValueTest($item, true, 'all');
         $this->assertSame(['email' => 'rm@wyz.biz'], $value);
@@ -203,12 +561,15 @@ class CopernicaUpdateProfilesJobTest extends TestCase
         $this->assertExceptionForGetItemKeyFieldValue($job, $item, true, 0, UnexpectedValueException::class, "'email' field contains an invalid e-mail address: \"invalid@\".");
         $value = $job->getItemKeyFieldValueTest($item, false, 0);
         $this->assertSame('invalid@', $value);
-        $job = $this->getJobWithGetItemKeyFieldValueTest(['copernica_profile_key_field' => ['email']]);
+        $job = $this->getJobWithAccessibleMethods(['copernica_profile_key_field' => ['email']]);
         $value = $job->getItemKeyFieldValueTest($item, true, 0);
         $this->assertSame('invalid@', $value);
         $item = ['email' => ''];
+        $this->assertExceptionForGetItemKeyFieldValue($job, $item, true, 'key', UnexpectedValueException::class, "Item does not contain a value for 'email' field(s).");
         $this->assertExceptionForGetItemKeyFieldValue($job, $item, true, 'until-nonempty', UnexpectedValueException::class, "Item does not contain a value for 'email' field(s).");
         $value = $job->getItemKeyFieldValueTest($item, false);
+        $this->assertSame([], $value);
+        $value = $job->getItemKeyFieldValueTest($item, false, 'until-nonempty');
         $this->assertSame(['email' => null], $value);
         $this->assertExceptionForGetItemKeyFieldValue($job, $item, true, 'all', UnexpectedValueException::class, "Item does not contain a value for 'email' field(s).");
         $value = $job->getItemKeyFieldValueTest($item, false, 'all');
@@ -219,14 +580,16 @@ class CopernicaUpdateProfilesJobTest extends TestCase
         $this->assertSame(null, $value);
 
         // Job with key_field being two fields.
-        $job = $this->getJobWithGetItemKeyFieldValueTest([
+        $job = $this->getJobWithAccessibleMethods([
           'copernica_profile_key_field' => ['OptionalId', 'email'],
           'copernica_profile_fields' => ['OptionalId' => 'OptionalIdInCopernica'],
-          'copernica_field_types' => ['OptionalIdInCopernica' => 'positive_int']
+          'copernica_field_settings' => ['OptionalIdInCopernica' => ['type' => 'integer', 'zero_can_overwrite' => false]]
         ]);
         // If only the first key is present:
         $item = ['OptionalId' => 5];
         $value = $job->getItemKeyFieldValueTest($item);
+        $this->assertSame(['OptionalId' => 5], $value);
+        $value = $job->getItemKeyFieldValueTest($item, true, 'until-nonempty');
         $this->assertSame(['OptionalId' => 5], $value);
         $value = $job->getItemKeyFieldValueTest($item, true, 'all');
         $this->assertSame(['OptionalId' => 5, 'email' => null], $value);
@@ -242,9 +605,11 @@ class CopernicaUpdateProfilesJobTest extends TestCase
         $item = ['OptionalId' => 5, 'email' => 'invalid@'];
         $value = $job->getItemKeyFieldValueTest($item);
         $this->assertSame(['OptionalId' => 5], $value);
+        $value = $job->getItemKeyFieldValueTest($item, true, 'until-nonempty');
+        $this->assertSame(['OptionalId' => 5], $value);
         $value = $job->getItemKeyFieldValueTest($item, true, 'all');
         // Invalid e-mail does not get checked if e-mail is not the first field.
-        // (Whether or not that makes sense... is for later.)
+        // (Whether or not that makes sense... is a question for later.)
         $this->assertSame(['OptionalId' => 5, 'email' => 'invalid@'], $value);
         $value = $job->getItemKeyFieldValueTest($item, true, 'loggable');
         $this->assertSame('5', $value);
@@ -254,12 +619,14 @@ class CopernicaUpdateProfilesJobTest extends TestCase
         $this->assertSame('invalid@', $value);
         $this->assertExceptionForGetItemKeyFieldValue($job, $item, false, 2, LogicException::class, "Key 2 not found in 'copernica_profile_key_field' setting.");
 
-        // Only non-first key is present (0 does not count for positive_int;
+        // Only non-first key is present (0 does not count for zero_is_empty);
         // this also does some implicit non-exhaustive testing for
         // isFieldValueEmpty() / getCopernicaProfileFieldName() /
         // getCopernicaFieldType(), which have no own unit tests):
         $item = ['OptionalId' => 0, 'email' => 'rm@wyz.biz'];
         $value = $job->getItemKeyFieldValueTest($item);
+        $this->assertSame(['email' => 'rm@wyz.biz'], $value);
+        $value = $job->getItemKeyFieldValueTest($item, true, 'until-nonempty');
         $this->assertSame(['OptionalId' => null, 'email' => 'rm@wyz.biz'], $value);
         $value = $job->getItemKeyFieldValueTest($item, true, 'all');
         $this->assertSame(['OptionalId' => null, 'email' => 'rm@wyz.biz'], $value);
@@ -273,10 +640,34 @@ class CopernicaUpdateProfilesJobTest extends TestCase
         $value = $job->getItemKeyFieldValueTest($item, true, 1);
         $this->assertSame('invalid@', $value);
 
+        // 0 is a key for the 'email' field because 0 is not an empty value
+        // for string-like fields. (We treat 0 like any other string; this code
+        // block is only here, copied from above, to shake out any code that
+        // would treat empty-but-not-really-empty values in the wrong way.)
+        $item = ['OptionalId' => 0, 'email' => 0];
+        $value = $job->getItemKeyFieldValueTest($item);
+        $this->assertSame(['email' => 0], $value);
+        $value = $job->getItemKeyFieldValueTest($item, true, 'until-nonempty');
+        $this->assertSame(['OptionalId' => null, 'email' => 0], $value);
+        $value = $job->getItemKeyFieldValueTest($item, true, 'all');
+        $this->assertSame(['OptionalId' => null, 'email' => 0], $value);
+        $value = $job->getItemKeyFieldValueTest($item, true, 'loggable');
+        $this->assertSame('email=0', $value);
+        $value = $job->getItemKeyFieldValueTest($item, true, 0);
+        $this->assertSame(null, $value);
+        $value = $job->getItemKeyFieldValueTest($item, true, 1);
+        $this->assertSame(0, $value);
+        $item = ['email' => 'invalid@'];
+        $value = $job->getItemKeyFieldValueTest($item, true, 1);
+        $this->assertSame('invalid@', $value);
+
         // No keys present at all.
         $item = ['OptionalId' => 0, 'email' => ''];
-        $this->assertExceptionForGetItemKeyFieldValue($job, $item, true, 'until-nonempty', UnexpectedValueException::class, "Item does not contain a value for 'OptionalId/email' field(s).");
+        $this->assertExceptionForGetItemKeyFieldValue($job, $item, true, 'key', UnexpectedValueException::class, "Item does not contain a value for 'OptionalId/email' field(s).");
         $value = $job->getItemKeyFieldValueTest($item, false);
+        $this->assertSame([], $value);
+        $this->assertExceptionForGetItemKeyFieldValue($job, $item, true, 'until-nonempty', UnexpectedValueException::class, "Item does not contain a value for 'OptionalId/email' field(s).");
+        $value = $job->getItemKeyFieldValueTest($item, false, 'until-nonempty');
         $this->assertSame(['OptionalId' => null, 'email' => null], $value);
         $this->assertExceptionForGetItemKeyFieldValue($job, $item, true, 'all', UnexpectedValueException::class, "Item does not contain a value for 'OptionalId/email' field(s).");
         $value = $job->getItemKeyFieldValueTest($item, false, 'all');
@@ -287,6 +678,17 @@ class CopernicaUpdateProfilesJobTest extends TestCase
         $this->assertSame(null, $value);
         $value = $job->getItemKeyFieldValueTest($item, true, 1);
         $this->assertSame(null, $value);
+
+        // If OptionalId is a 'regular number' field, 0 is treated as nonempty
+        // when in the item, but empty when it hits Copernica - which is bad
+        // for getItemKeyFieldValue() logic. We should prevent this.
+        $job = $this->getJobWithAccessibleMethods([
+          'copernica_profile_key_field' => ['OptionalId', 'email'],
+          'copernica_profile_fields' => ['OptionalId' => 'OptionalIdInCopernica'],
+          'copernica_field_settings' => ['OptionalIdInCopernica' => ['type' => 'integer']]
+        ]);
+        $item = ['OptionalId' => 0, 'email' => 'rm@wyz.biz'];
+        $this->assertExceptionForGetItemKeyFieldValue($job, $item, true, 'all', UnexpectedValueException::class, "'OptionalId' value 0 is not considered empty, but will be considered empty when updated in Copernica. We cannot use this as (part of) a key field value.");
     }
 
     /**
@@ -304,17 +706,32 @@ class CopernicaUpdateProfilesJobTest extends TestCase
     }
 
     /**
-     * Returns job that makes getItemKeyFieldValue() callable (in a way).
+     * Returns job that makes some protected methods callable (in a way).
      *
      * @return \CopernicaUpdateProfilesJob
      *   Class with public getItemKeyFieldValueTest() method.
      */
-    protected function getJobWithGetItemKeyFieldValueTest($settings)
+    protected function getJobWithAccessibleMethods($settings)
     {
         return new class ($settings) extends CopernicaUpdateProfilesJob {
-            public function getItemKeyFieldValueTest(array $item, $validate = true, $sub = 'until-nonempty')
+            public function getItemKeyFieldValueTest(array $item, $validate = true, $sub = 'key')
             {
                 return $this->getItemKeyFieldValue($item, $validate, $sub);
+            }
+
+            public function isFieldValueEqualTest($item_value, $other_value, $settings_field_name = '')
+            {
+                return $this->isFieldValueEqual($item_value, $other_value, $settings_field_name);
+            }
+
+            public function isFieldValueEmptyTest($item_value, $settings_field_name = '', $value_is_new_value = false)
+            {
+                return $this->isFieldValueEmpty($item_value, $settings_field_name, $value_is_new_value);
+            }
+
+            public function shouldUpdateTest($new_value, $copernica_profile_or_sub, $copernica_field_name)
+            {
+                return $this->shouldCopernicaFieldBeUpdated($new_value, $copernica_profile_or_sub, $copernica_field_name);
             }
         };
     }
@@ -325,7 +742,7 @@ class CopernicaUpdateProfilesJobTest extends TestCase
      * Not a unit test; exercises code by processing items. If we wanted to
      * test this method 'as standalone as possible', we'd need to do a boatload
      * of setup of settings / API backend contents, which is all way easier
-     * (and more logical to read) by just stuffing items into processItem().
+     * (and more logical to read) by just stuffing items through processItem().
      * We'll live with the consequence of this not being a unit test; it
      * depends on processItem() / updateMainProfiles() / createMainProfiles()
      * not being broken.
@@ -555,6 +972,22 @@ class CopernicaUpdateProfilesJobTest extends TestCase
         $api_client = new CopernicaRestClient(self::TOKEN, '\CopernicaApi\Tests\TestApiFactory');
         $check_profiles = $api_client->getEntities("database/$database_id/profiles", ['fields' => ['Firstname==Piet', 'Lastname==Muit']]);
         $this->assertSame(1, count($check_profiles));
+
+        // Only case insensitivity changes in the main profile are not updated.
+        $api->resetApiUpdateLog();
+        $item['first_name'] = 'PIET';
+        unset($item['last_name']);
+        $this->getJob([
+            'copernica_field_settings' => [
+              'Email' => ['compare_case_insensitive' => true],
+              'Firstname' => ['compare_case_insensitive' => true],
+              'Lastname' => ['compare_case_insensitive' => true],
+            ],
+        ])->processItem($item, $job_context);
+        $this->assertSame(
+            ["POST profile/$profile_id/subprofiles/$collection_id"],
+            $api->getApiUpdateLog()
+        );
 
         // @todo test inserting subprofile for deleted profile. Is only
         //   interesting if we test with cache on.

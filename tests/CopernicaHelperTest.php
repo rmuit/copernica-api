@@ -133,7 +133,8 @@ class CopernicaHelperTest extends TestCase
             ['integer', -2, -2],
             ['integer', 2.99, 2],
             ['integer', -2.99, -2],
-            ['integer', ['any-kind-of-array'], 1],
+            ['integer', [], 0],
+            ['integer', ['any-kind-of-nonempty-array'], 1],
             ['float', 'value', 0.0],
             ['float', ' 2.99  ', 2.99],
             ['float', 'true', 0.0],
@@ -142,17 +143,19 @@ class CopernicaHelperTest extends TestCase
             ['float', -2, -2.0],
             ['float', 2.99, 2.99],
             ['float', -2.99, -2.99],
-            ['float', ['any-kind-of-array'], 1.0],
+            ['float', [], 0.0],
+            ['float', ['any-kind-of-nonempty-array'], 1.0],
         ];
         // Date specifications are a separate issue. First, we have inputs
         // whose matching output we know exactly:
         // - those that contain no dynamic parts AND whose input values don't
         //   specify a timezone.
         // - those that don't properly convert;
-        // We can add these to the above array as-is; we just want to do it 4
-        // times where, the empty output is "0000-00-00 00:00:00" for
-        // 'datetime' fields and "0000-00-00" for 'date' fields.
+        // We can add these to the above array as-is; we do it in a loop (and
+        // chop off the time / replace the 'empty value' as needed).
         $dates1 = [
+            // Below mostly serves as behavior spec for strtotime(), though
+            // some things differ - see normalizeInputValue() comments.
             ['2020-01-02 03:04:05', '2020-01-02 03:04:05'],
             ['  2020-01-02t03:04:05  ', '2020-01-02 03:04:05'],
             ['2020-01-02t03:04:05.987654', '2020-01-02 03:04:05'],
@@ -162,11 +165,21 @@ class CopernicaHelperTest extends TestCase
             ['2020-01-02tz03:04', ''],
             ['2020-2', '2020-02-01 00:00:00'],
             ['2020 2', ''],
-            ['value', ''],
+            ['1900-01-001 00:00', ''],
+            // This one is empty, apparently because Copernica treats
+            // 0000-00-00 as the empty value regardless of time spec:
+            ['0000-00-00 23:59:59', ''],
+            // 0000-00-01 00:00:00, and all date specifications that are
+            // 'legal' for strtotime() but would result in a negative year
+            // number, convert to "0000-00-00"... which is *not* the empty
+            // value for empty_date(time) fields.
+            ['0000-00-01 00:00', '0000-00-00 00:00:00'],
+            ['aa', ''],
             ['true', ''],
             ['', ''],
             [true, ''],
             [false, ''],
+            [['any-kind-of-array'], ''],
             // Timestamps don't work. (But they do when suffixed with '@'.)
             [1596979546, ''],
             [999, ''],
@@ -208,6 +221,8 @@ class CopernicaHelperTest extends TestCase
             [1960], // 1960-MM-DD HH:mm:ss
             ['now'],
             ['yesterday'],
+            // Single-character strings equal 'now' in military timezones.
+            ['a']
         ];
 
         // Add the date conversions to the data array.

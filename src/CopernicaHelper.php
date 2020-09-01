@@ -5,6 +5,7 @@ namespace CopernicaApi;
 use DateTime;
 use DateTimeZone;
 use Exception;
+use UnexpectedValueException;
 
 /**
  * Static utility method(s) for code that deals with Copernica
@@ -56,14 +57,18 @@ class CopernicaHelper
      */
     public static function normalizeInputValue($value, array $field_struct)
     {
-        if (!isset($field_struct)) {
-            // Nothing to do. It's not our business to emit errors.
+        // We'll accept values as-is if the field type is unknown, so the code
+        // is also useful for code that does not define _all_ its field types
+        // explicitly. We'll throw exceptions for unknown types; this library's
+        // usual policy is "don't let any strange value through unnoticed /
+        // taking away an exception for a previously not accepted value is
+        // easier than erroring out on a previously accepted value".
+        if (!isset($field_struct['type'])) {
             return $value;
         }
-        switch ($field_struct['type']) {
+        switch ((string)$field_struct['type']) {
             // Email field is not checked for valid e-mail. (The UI does that,
-            // the REST API doesn't.) It's treated the same as string re. above
-            // conversion.
+            // the REST API doesn't.)
             case 'email':
             case 'text':
                 if (is_scalar($value)) {
@@ -114,10 +119,35 @@ class CopernicaHelper
             case 'empty_datetime':
                 // It seems that Copernica is using strtotime() internally. We
                 // use DateTime objects so we can also work well if our PHP is
-                // not configured for the same timezone as Copernica is. A
-                // difference is: new DateTime(''/false) is a valid expression
-                // but strtotime('') is not.
-                if ($value !== '' && $value !== false) {
+                // not configured for the same timezone as Copernica is. Points:
+                // - new DateTime(''/false) is a valid expression (evaluates to
+                //   <now>) but strtotime('') is not (evaluates to False).
+                //   Copernica evaluates to <empty>.
+                // - strtotime(' ') on the other hand evaluates to <now>. But
+                //   Copernica does not; it makes this empty too. This is the
+                //   only reason we're trim()ing strings - trim()ing is not
+                //   known to make a difference for any other value.
+                // - Expressions like "0000-00-01" can result in a negative
+                //   year number. Apparently the 'negative year' is where
+                //   Copernica draws a line and gives it "0000-00-00" instead
+                //   (or +00:00:00 for datetime fields), also for 'empty_' type
+                //   dates.
+                // - Exception to the previous are dates starting with
+                //   "0000-00-00", regardless of the time specification. Those
+                //   become empty for 'empty_' type fields /
+                //   "0000-00-00 00:00:00" for datetime. (This means
+                //   "0000-00-00 23:59:59" and "0000-00-01 00:00:00" are
+                //   treated differently; the first is 'empty'.)
+                if (is_string($value)) {
+                    $value = trim($value);
+                }
+                $negative_date = false;
+                // $empty_input is not all cases of 'empty' input; it's all
+                // cases that would not come out as empty if we put them
+                // through date wrangling.
+                $empty_input = $value === '' || $value === false || $value === null || !is_scalar($value)
+                    || is_string($value) && strpos($value, '0000-00-00') === 0;
+                if (!$empty_input) {
                     // DateTime is finicky when working in the non-default
                     // timezone: if the date/time expression does not contain a
                     // timezone component, we must pass a timezone object into
@@ -140,16 +170,21 @@ class CopernicaHelper
                     } catch (Exception $e) {
                         $value = '';
                     }
+                    $negative_date = strpos($value, '-') === 0;
                 }
-                if ($value === '' || $value === false) {
-                    if ($field_struct['type'] === 'date') {
+                if ($value === '' || $empty_input || $negative_date) {
+                    if ($field_struct['type'] === 'date' || $negative_date && $field_struct['type'] === 'empty_date') {
                         $value = '0000-00-00';
-                    } elseif ($field_struct['type'] === 'datetime') {
+                    } elseif ($field_struct['type'] === 'datetime' || $negative_date && $field_struct['type'] === 'empty_datetime') {
                         $value = '0000-00-00 00:00:00';
                     } else {
                         $value = '';
                     }
                 }
+                break;
+
+            default:
+                throw new UnexpectedValueException("Unknown field type '{$field_struct['type']}'.");
         }
 
         return $value;

@@ -404,7 +404,9 @@ class ApiBehaviorTest extends TestCase
         //   field being inserted. Also if the latter value is empty.
         // - Inserting the same data will result in a second profile.
         // - 'Empty' profile can be created.
-        // @todo also still test defaults for all types.
+        // @todo also still test defaults for all types. (Maybe differentiate
+        //   between arrays with no / alphanumeric keys, because they get
+        //   converted differently (array/object) in the JSON to send.)
         $profile = [
             'wonky' => 3,
             'Email' => 'rm@wyz.biz',
