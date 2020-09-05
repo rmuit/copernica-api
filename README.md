@@ -353,6 +353,14 @@ anyway.)
   polishing/documenting/republishing the code and implementing most of the test
   code was done in my own unpaid time.)
 
+The result of the partial sponsorship is a component for use in synchronization
+processes which can update profiles plus attached subprofiles on the basis of
+imported 'items' - in a trustworthy, efficient and configurable way. If you're
+in need of such a component, feel free to contact me and state your case for
+needing it. (It's not yet open sourced as it has cost a _lot_ of paid and
+unpaid developer hours. The tests and helper code in extra/ give some insight
+into the robustness of its code.)
+
 ## License
 
 This library is licensed under the GPL, version 2 or any higher version -
@@ -360,6 +368,6 @@ except the CopernicaRestAPI class (which is not illegal for me to republish but
 which is also downloadable from the Copernica website).
 
 (The license may seem slightly odd but is chosen to keep the possibility of
-distributing the code together with Drupal, which is a potential issue for the
-profile import component. If that outlook changes, I might relicense a newer
-version under either GPLv3 or MIT license.)
+distributing the code together with Drupal, which would be a potential issue
+for the profile import component. If that outlook changes, I might relicense a
+newer version under either GPLv3 or MIT license.)

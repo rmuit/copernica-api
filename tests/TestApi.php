@@ -74,8 +74,8 @@ class TestApi
      * CopernicaRestAPI just isn't informative enough to guarantee behavior.
      *
      * This class may opt to throw LogicExceptions in certain circumstances
-     * (like needing to report an error back to the caller) if  the value is
-     * still false.
+     * (like needing to report an error back to the caller) also if the value
+     * is false.
      *
      * @var bool
      */
@@ -143,9 +143,7 @@ class TestApi
     protected $currentResource;
 
     /**
-     * A log of the API calls made. For tests. Structure might change still.
-     *
-     * This is all POST/PUT/DELETE calls, not GET.
+     * A log of the API calls made.
      *
      * @var string[]
      */
@@ -160,15 +158,23 @@ class TestApi
      *   to the copernica entities that hold profiles etc, not to our SQL
      *   database backend.
      * @param \PDO $pdo_connection
-     *   (Optional) PDO connection; if passed, the contents of the database
+     *   (Optional) PDO connection; if not null, the contents of the database
      *   are assumed to match the structure already (to a point that tests do
      *   not fail inexplicably), so no tables are created at construction time.
+     * @param bool $throw_on_error
+     *   (Optional) True to to throw exceptions when the class emulates Curl
+     *   errors / strange HTTP codes (rather than return whatever value
+     *   CopernicaRestAPI methods usually return). This is an constructor
+     *   argument to hopefully catch developers' attention: even though this
+     *   can be set in a public property which is false by default (to be on
+     *   par with CopernicaRestAPI), passing True is recommended for most tests.
      *
      * @see TestApi::normalizeDatabasesStructure()
      */
-    public function __construct(array $databases_structure = [], PDO $pdo_connection = null)
+    public function __construct(array $databases_structure = [], $pdo_connection = null, $throw_on_error = false)
     {
         $this->databasesStructure = $this->normalizeDatabasesStructure($databases_structure);
+        $this->throwOnError = $throw_on_error;
         if ($this->pdoConnection) {
             // We're not making any assumptions about a provided connection. If
             // needed, call initDatabase() by yourself after construction.
@@ -213,7 +219,7 @@ class TestApi
     public function get($resource, array $parameters = array())
     {
         // No update log; we don't care that much (yet) how often we call GET.
-        $parts = $this->initRestCall('GET', $resource, false);
+        $parts = $this->initRestCall('GET', $resource);
         if (isset($parts['error'])) {
             return $parts;
         }
@@ -796,11 +802,21 @@ class TestApi
     /**
      * Gets the 'call log' for API calls made.
      *
+     * @param array $methods
+     *   Only return the methods mentioned. Must be upper case. Empty for all.
+     *
      * @return string[]
      *   The URLs of the API calls made, in order.
      */
-    public function getApiUpdateLog()
+    public function getApiUpdateLog(array $methods = [])
     {
+        if ($methods) {
+            // array_values(), to renumber keys.
+            return array_values(array_filter($this->apiUpdateLog, function ($value) use ($methods) {
+                $parts = explode(' ', $value);
+                return in_array($parts[0], $methods, true);
+            }));
+        }
         return $this->apiUpdateLog;
     }
 
@@ -859,13 +875,11 @@ class TestApi
      *   horrible way of communicating extra info back to the caller, which now
      *   every caller must be aware of.)
      */
-    protected function initRestCall($method, $resource, $addLog = true)
+    protected function initRestCall($method, $resource)
     {
         $this->currentResource = trim($resource, '/');
         $this->currentMethod = $method;
-        if ($addLog) {
-            $this->apiUpdateLog [] = "$method $resource";
-        }
+          $this->apiUpdateLog [] = "$method $resource";
         if ($this->invalidToken) {
             return $this->returnError('Invalid access token');
         }
@@ -1448,9 +1462,9 @@ class TestApi
         if (!empty($data['fields'])) {
             $insert_data += $this->normalizeFieldsInput($data['fields'], $database_id);
         }
-        $id = $this->insertEntityRecord("profile_$database_id", $insert_data);
-        $this->dbInsertRecord('profile_db', ['profile_id' => $id, 'database_id' => $database_id]);
-        return $id;
+        $insert_data['_pid'] = $this->dbInsertRecord('profile_db', ['database_id' => $database_id]);
+        $this->insertEntityRecord("profile_$database_id", $insert_data);
+        return $insert_data['_pid'];
     }
 
     /**
@@ -1482,9 +1496,9 @@ class TestApi
         }
         $data = ['_pid' => $profile_id, '_secret' => $this->getRandomSecret()]
             + $this->normalizeFieldsInput($data, $collection_id, true);
-        $id = $this->insertEntityRecord("subprofile_$collection_id", $data);
-        $this->dbInsertRecord('subprofile_coll', ['subprofile_id' => $id, 'collection_id' => $collection_id]);
-        return $id;
+        $data['_spid'] = $this->dbInsertRecord('subprofile_coll', ['collection_id' => $collection_id]);
+        $this->insertEntityRecord("subprofile_$collection_id", $data);
+        return $data['_spid'];
     }
 
     /**
@@ -2086,7 +2100,7 @@ class TestApi
      *   return value is guaranteed to be an array (so it's countable, etc).
      *
      * @return array|\Traversable
-     *   An array of database rows (as objects), or an equivalent traversable.
+     *   An array of database rows (as arrays), or an equivalent traversable.
      */
     public function dbFetchAll($query, $parameters = [], $key = null)
     {
@@ -2096,7 +2110,7 @@ class TestApi
             $result = [];
             $i = 0;
             foreach ($ret as $record) {
-                $result[$key ? $record->$key : $i++] = $record;
+                $result[$key ? $record[$key] : $i++] = $record;
             }
             $ret = $result;
         }
@@ -2201,7 +2215,7 @@ class TestApi
      *   which are added by this method. Fields are expected to be SQL safe.
      *
      * @return int
-     *   The last inserted ID.
+     *   The inserted ID.
      */
     protected function dbInsertRecord($table, array $record)
     {
@@ -2908,8 +2922,12 @@ class TestApi
             case 'sqlite':
                 // We'll need a table for profile id -> database mapping, if we
                 // don't want to look into each individual database's profile
-                // table to resolve calls like profile/$id/subprofiles.
-                // Same for subprofile -> collection mapping.
+                // table to resolve calls like profile/$id/subprofiles. Same
+                // for subprofile -> collection mapping. Also, there's a single
+                // 'number space' for all profiles and for all subprofiles.
+                // (I'm not sure how important that is for profiles, but it
+                // works that way, and I'm sure it's important for subprofiles.)
+                // So the autoincrement needs to be on the shared table.
                 // @TODO? instead create tables named (sub)profile_meta and move
                 //   _created _modified _removed _pid (for subprofile) _secret
                 //   into there, without underscores. If I remember correctly,
@@ -2925,10 +2943,10 @@ class TestApi
                 //   subprofiles, etc. But I don't know if that's ever
                 //   necessary. Maybe wait until there's a real need.
                 $this->pdoConnection->exec("CREATE TABLE profile_db (
-                    profile_id  INTEGER PRIMARY KEY,
+                    profile_id  INTEGER PRIMARY KEY AUTOINCREMENT,
                     database_id INTEGER NOT NULL)");
                 $this->pdoConnection->exec("CREATE TABLE subprofile_coll (
-                    subprofile_id INTEGER PRIMARY KEY,
+                    subprofile_id INTEGER PRIMARY KEY AUTOINCREMENT,
                     collection_id INTEGER NOT NULL)");
                 // We don't need an index on db id; we have the database
                 // specific profile table for that.
@@ -2941,10 +2959,7 @@ class TestApi
                         foreach ($database['fields'] as $field) {
                             $fields[] = $this->getSqlFieldSpec($field);
                         }
-                        // "_pid" is for the profile id. AUTOINCREMENT is
-                        // likely necessary because of Copernica's 'removed'
-                        // functionality.
-                        $this->pdoConnection->exec("CREATE TABLE profile_$db_id (_pid INTEGER PRIMARY KEY AUTOINCREMENT, " . implode(', ', $fields) . ", $common_columns)");
+                        $this->pdoConnection->exec("CREATE TABLE profile_$db_id (_pid INTEGER PRIMARY KEY, " . implode(', ', $fields) . ", $common_columns)");
                     }
                     if (!empty($database['collections'])) {
                         foreach ($database['collections'] as $coll_id => $collection) {
@@ -2955,7 +2970,7 @@ class TestApi
                                     $fields[] = $this->getSqlFieldSpec($field);
                                 }
                                 // "_(s)pid" are for the (sub)profile id.
-                                $this->pdoConnection->exec("CREATE TABLE subprofile_$coll_id (_spid INTEGER PRIMARY KEY AUTOINCREMENT, _pid INTEGER NOT NULL, " . implode(', ', $fields) . ", $common_columns)");
+                                $this->pdoConnection->exec("CREATE TABLE subprofile_$coll_id (_spid INTEGER PRIMARY KEY, _pid INTEGER NOT NULL, " . implode(', ', $fields) . ", $common_columns)");
                             }
                         }
                     }
