@@ -315,25 +315,25 @@ class CopernicaHelper
     {
         $keyed = [];
         foreach ($entities as $orig_key => $entity) {
-          if (!isset($entity[$new_key_property])) {
-            if ($throw_if_incomplete) {
-              throw new RuntimeException("Embedded entity has no '$new_key_property' property.", 803);
+            if (!isset($entity[$new_key_property])) {
+                if ($throw_if_incomplete) {
+                    throw new RuntimeException("Embedded entity has no '$new_key_property' property.", 803);
+                }
+                continue;
             }
-            continue;
-          }
-          if (!is_string($entity[$new_key_property]) && !is_int($entity[$new_key_property])) {
-            if ($throw_if_incomplete) {
-              throw new RuntimeException("Embedded entity's' '$new_key_property' property has an invalid type.", 803);
+            if (!is_string($entity[$new_key_property]) && !is_int($entity[$new_key_property])) {
+                if ($throw_if_incomplete) {
+                    throw new RuntimeException("Embedded entity's' '$new_key_property' property has an invalid type.", 803);
+                }
+                continue;
             }
-            continue;
-          }
-          if (isset($keyed[$entity[$new_key_property]]) && $throw_if_incomplete) {
-            throw new RuntimeException("Multiple embedded entities contain the same '$new_key_property' value ({$entity[$new_key_property]}) multiple times.", 803);
-          }
-          $keyed[$entity[$new_key_property]] = $entity;
-          // If the array is quite large, PHP might want to garbage collect
-          // now-unnecessary memory at its convenience.
-          unset($entities[$orig_key]);
+            if (isset($keyed[$entity[$new_key_property]]) && $throw_if_incomplete) {
+                throw new RuntimeException("Multiple embedded entities contain the same '$new_key_property' value ({$entity[$new_key_property]}) multiple times.", 803);
+            }
+            $keyed[$entity[$new_key_property]] = $entity;
+            // If the array is quite large, PHP might want to garbage collect
+            // now-unnecessary memory at its convenience.
+            unset($entities[$orig_key]);
         }
         return $keyed;
     }
