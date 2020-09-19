@@ -726,11 +726,11 @@ class CopernicaRestClient
      * Executes a GET request that returns a batch of items.
      *
      * This method checks if the returned response contains a valid structure
-     * for a list of entities, and if each individual entity is also valid (has
+     * for a set of entities, and if each individual entity is also valid (has
      * an ID value).
      *
      * The bitmask set through suppressApiCallErrors() has no effect on this
-     * method because it is explicitly meant to return a list of valid entities.
+     * method because it is explicitly meant to return a set of valid entities.
      *
      * @param string $resource
      *   Resource (URI relative to the versioned API) to fetch data from.
@@ -815,62 +815,14 @@ class CopernicaRestClient
      */
     public function lastEntitiesDatasetIsComplete()
     {
-        // The '>' situation would have errored out in unwrapEntitiesResult().
+        // The '>' situation would have errored out in getEntities().
         return $this->nextEntitiesDatasetStart >= $this->lastEntitiesDatasetTotal;
     }
 
     /**
      * Extracts embedded entities from an entity's data.
      *
-     * A list of embedded entities is wrapped inside its own structure of
-     * start/limit/count/total properties, and this function extract them from
-     * that structure so calling code does not need to deal with it. (Just like
-     * every API response containing entities exists of such a structure but
-     * getEntities() extracts transparently them for us.)
-     *
-     * Two types of entity that are known to have lists of embedded entities,
-     * are:
-     * - databases, which have 'fields', 'interests' and 'collections'
-     * - collections, which again have 'fields'.
-     * Each of these embedded properties also have their own API calls
-     * defined, e.g. databases/<ID>/fields, which is recommended to call if we
-     * are just looking for the embedded entities. But for code that wants to
-     * use data from lists of embedded entities and/or the main entity at the
-     * same time, and does not want to perform repeated API calls, this helper
-     * method can come in handy.
-     *
-     * This method isn't very generic, in the sense that it requires the caller
-     * to know about which properties contain 'wrapped' entities and to
-     * estimate that the list of entities is complete. Then again, the whole
-     * concept of returning  embedded entities inside an API result feels not
-     * very generic to begin with. (It wastes time on the API server side if we
-     * don't need those data.) It's quite possible that this only  applies to
-     * databases and collections; if Copernica was doing this more often, it
-     * would make more sense to create a separate class to represent entity
-     * data with getters for the embedded entities. But at the moment, that
-     * seems unnecessary.
-     *
-     * @param array $entity
-     *   The entity containing embedded data.
-     * @param string $property_name
-     *   The property containing a list of entities wrapped in
-     *   start/limit/count/total properties.
-     * @param bool $throw_if_incomplete
-     *   (Optional) if set to FALSE, this method will not throw an exception if
-     *   the list of embedded entities is incomplete but will just return the
-     *   incomplete list. By default it throws an exception with code 113, and
-     *   supposedly the only way to get a complete list is to perform the
-     *   separate API call for the entities, and then supposedly call
-     *   getEntitiesNextBatch() until you have
-     *
-     * @return array
-     *   The embedded entities.
-     *
-     * @throws \RuntimeException
-     *   If the property does not have the expected structure.
-     *
-     * @todo check how total=false (which currently throws exceptions) affects
-     *   $throw_is_incomplete, and document.
+     * @deprecated Use the method in CopernicaHelper instead.
      */
     public function getEmbeddedEntities(array $entity, $property_name, $throw_if_incomplete = true)
     {
@@ -887,11 +839,14 @@ class CopernicaRestClient
 
         if ($entity[$property_name]['start'] !== 0) {
             // This is unexpected; we don't know how embedded entities
-            // implement paging and until we do, we disallow this.
-            throw new RuntimeException("List of entities inside '$property_name' property starts at {}; we cannot handle anything not starting at 0.", 804);
+            // implement paging and until we do, we disallow this. Supposedly
+            // the only way to get a complete list is to perform the separate
+            // API call for the specific entities and then call
+            // getEntitiesNextBatch() until the set is complete.
+            throw new RuntimeException("Set of entities inside '$property_name' property starts at {$entity[$property_name]['start']}; we cannot handle anything not starting at 0.", 804);
         }
         if ($throw_if_incomplete && $entity[$property_name]['count'] !== $entity[$property_name]['total']) {
-            throw new RuntimeException("Cannot return the total list of {$entity[$property_name]['totel']} entities inside '$property_name' property; only {$entity[$property_name]['count']} found.", 804);
+            throw new RuntimeException("Cannot return the total set of {$entity[$property_name]['totel']} entities inside '$property_name' property; only {$entity[$property_name]['count']} found.", 804);
         }
 
         return $entity[$property_name]['data'];
@@ -946,7 +901,6 @@ class CopernicaRestClient
             || !is_array($state['last_parameters'])
             || !isset($state['last_total'])
             || !isset($state['next_start'])
-            // If this ever fails, we need to check unwrapEntitiesResult().
             || !is_int($state['last_total'])
             || !is_int($state['next_start'])
         ) {
@@ -1196,7 +1150,7 @@ class CopernicaRestClient
      *   The parameters for the GET query returning this result. These are used
      *   to doublecheck some result properties.
      * @param string $struct_descn
-     *   Description of the structure, for log files.
+     *   Description of the structure, for exception messages.
      *
      * @throws \RuntimeException
      *   If the result metadata are not successfully verified.

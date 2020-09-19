@@ -22,6 +22,7 @@ profile / subprofile / emailing / database; likely anything that has an ID
 value.) It is hopefully self evident which of the three 'get' methods
 can best be used, based on the API endpoint.
 ```php
+use CopernicaApi\CopernicaHelper;
 use CopernicaApi\CopernicaRestClient;
 
 $client = new CopernicaRestClient(TOKEN);
@@ -65,6 +66,10 @@ while ($next_batch = $client->getEntitiesNextBatch()) {
     // It is possible to pause execution and fetch the next batch in a separate
     // PHP thread, with some extra work; check backupState() for this.
 }
+// If we want to access the mailings by ID, here's a quick helper
+// method. (For mailings this is likely not useful; for e.g. profiles it might
+// be - and the second argument needs to be "ID" there.)
+$mailings = CopernicaHelper::rekeyEntities($mailings, 'id');
 ```
 
 The response of some API calls contain lists of other entities inside an entity.
@@ -72,14 +77,14 @@ This is not very common. (It's likely only the case for 'structure' entities
 like databases and collections, as opposed to 'user data' entities.) These
 embedded entities are wrapped inside a similar set of metadata as an API result
 for a list of entities. While this library does not implement perfect
-structures to work with embedded entities, it does provide one method to
+structures to work with embedded entities, it does provide a method to
 validate and 'unwrap' these metadata so the caller doesn't need to worry about
 it. An example:
 ```php
 $database = $client->getEntity("database/$db_id");
-$collections = $client->getEmbeddedEntities($database, 'collections');
-$first_collection = reset($collections);
-$first_collection_fields = $client->getEmbeddedEntities($first_collection, 'fields');
+$collections = CopernicaHelper::getEmbeddedEntities($database, 'collections');
+$collections = CopernicaHelper::rekeyEntities($collections, 'ID');
+$collection_fields = CopernicaHelper::getEmbeddedEntities($collections[$a_collection_id], 'fields');
 // Note if we only need the collections of one database, or the fields of one
 // collection, it is recommended to call the dedicated API endpoint instead.
 ```
