@@ -5,6 +5,7 @@ namespace CopernicaApi;
 use DateTime;
 use DateTimeZone;
 use Exception;
+use RuntimeException;
 use UnexpectedValueException;
 
 /**

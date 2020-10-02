@@ -17,6 +17,8 @@ class CopernicaRestClient
      * calls; use this value to always throw exceptions (i.e. suppress none) in
      * real or perceived error situations - thereby ensuring that values
      * returned from calls are always valid and usable.
+     *
+     * This is the class default.
      */
     const NONE = 0;
 
@@ -245,13 +247,6 @@ class CopernicaRestClient
     private $apiFactoryClassName;
 
     /**
-     * An instantiated API connection class.
-     *
-     * @var object
-     */
-    private $api;
-
-    /**
      * The access token.
      *
      * @var string
@@ -461,7 +456,7 @@ class CopernicaRestClient
      *   unrecognized message (which we hope is impossible).
      *
      * @throws \RuntimeException
-     *   If any non-supressed Curl error, nonstandard HTTP response code or
+     *   If any non-suppressed Curl error, nonstandard HTTP response code or
      *   unexpected response headers are encountered.
      *
      * @see CopernicaRestClient::suppressApiCallErrors()
@@ -619,6 +614,13 @@ class CopernicaRestClient
         // we don't know of an application that needs it.
         $api->throwOnError = true;
         try {
+            // If the caller left $resource empty, let's preempt that; throw a
+            // 400 as the API would, or return FALSE if suppressed. Do the
+            // same for non-strings. Don't specify resource because the API
+            // wouldn't.
+            if (empty($resource) || !is_string($resource)) {
+                throw new RuntimeException('Copernica API request failed: Invalid methd.', 400);
+            }
             $result = $api->get($resource, $parameters);
         } catch (RuntimeException $e) {
             // Code 0 is normally one specific error, indicating invalid JSON -
@@ -739,7 +741,7 @@ class CopernicaRestClient
      *
      * @return array[]
      *   The 'data' part of the JSON-decoded response body, i.e. an array of
-     *   entities.
+     *   (zero or more) entities.
      *
      * @throws \RuntimeException
      *   If the result metadata are not successfully verified.
@@ -782,9 +784,11 @@ class CopernicaRestClient
      * and consecutive calls to getEntitiesNextBatch(), until this returns an
      * empty array.
      *
-     * @return array[]
+     * @return array[]|false
      *   The 'data' part of the JSON-decoded response body, i.e. an array of
      *   entities - or empty array if no more items are left in the batch.
+     *   False if exceptions were suppressed for '400' errors and no
+     *   getEntities() call was done earlier.
      */
     public function getEntitiesNextBatch()
     {
@@ -932,17 +936,15 @@ class CopernicaRestClient
      */
     private function getApiConnection()
     {
-        if (!isset($this->api)) {
-            if ($this->apiFactoryClassName) {
-                // We're using the factory pattern because we need to be able
-                // to instantiate the actual 'api connection' class outside of
-                // the constructor, to e.g. make restoreState() work.
-                $this->api = call_user_func([$this->apiFactoryClassName, 'create'], $this->token, $this->version);
-            } else {
-                $this->api = new CopernicaRestAPI($this->token, $this->version);
-            }
+        if ($this->apiFactoryClassName) {
+            // We're using the factory pattern because we need to be able
+            // to instantiate the actual 'api connection' class outside of
+            // the constructor, to e.g. make restoreState() work.
+            $api = call_user_func([$this->apiFactoryClassName, 'create'], $this->token, $this->version);
+        } else {
+            $api = new CopernicaRestAPI($this->token, $this->version);
         }
-        return $this->api;
+        return $api;
     }
 
     /**

@@ -1828,9 +1828,11 @@ class TestApi
             $parameters['total'] = true;
         } elseif (!is_bool($parameters['total'])) {
             if (!is_scalar($parameters['total'])) {
-                $parameters['total'] = true;
+                // All arrays, no others (because rawurlencode() encodes
+                // objects to empty string).
+                $parameters['total'] = is_array($parameters['total']);
             } elseif (is_string($parameters['total']) && !is_numeric($parameters['total'])) {
-                $parameters['total'] = strtolower($parameters['total']) === 'true';
+                $parameters['total'] = in_array(strtolower($parameters['total']), ['yes', 'true'], true);
             } else {
                 $parameters['total'] = abs($parameters['total']) >= 1;
             }

@@ -524,6 +524,10 @@ class ApiBehaviorTest extends TestCase
         // @todo still test orderby and multiple conditions for the same field.
         //   We'll need more data for that. Likely first test defaults for all
         //   types, per above.
+        // @todo when we get here: simplify by first separating values for
+        //   'total' out into separate test (and mention that it's conceptually
+        //   not a test but an overly detailed spec); follow/incorporate
+        //   TestApi::normalizeEntitiesParams().
         $result = $api->get("database/$database_id/profiles/$profile_id", ['fields' => false, 2 => 4, 'bogus' => 345, 'total' => 'TRue']);
         $this->assertSame($expected_profiles, $result);
         $result = $api->get("database/$database_id/profiles/bogus/path", ['fields' => 'nothing', 'total' => []]);
