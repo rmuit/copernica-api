@@ -192,6 +192,32 @@ class CopernicaHelper
     }
 
     /**
+     * Indicates whether a value converts to True by Copernica.
+     *
+     * This logic would likely be part of normalizeInputValue() if there was a
+     * boolean field. It's used for 'boolean' query parameters and has only
+     * been tested for values of the 'total' parameter so far, so it stays
+     * private until it needs to be used more widely.
+     */
+    private static function isBooleanTrue($value)
+    {
+        if (!is_bool($value)) {
+            if (is_string($value) && !is_numeric($value)) {
+                // Leading/trailing spaces 'falsify' the outcome.
+                $value = in_array(strtolower($value), ['yes', 'true'], true);
+            } elseif (is_scalar($value)) {
+                $value = abs($value) >= 1;
+            } else {
+                // All arrays, no others (because rawurlencode() encodes
+                // objects to empty string).
+                $value = is_array($value);
+            }
+        }
+
+        return $value;
+    }
+
+    /**
      * Normalizes an input value to be able to be used as 'secret'.
      *
      * Not sure if this has any use outside of TestApi, but it fits with
@@ -263,9 +289,6 @@ class CopernicaHelper
      * @throws \RuntimeException
      *   If the property does not have the expected structure.
      *
-     * @todo check how total=false (which currently throws exceptions) affects
-     *   $throw_is_incomplete, and document.
-     * @todo same in the deprecated CopernicaRestClient copy?
      */
     public static function getEmbeddedEntities(array $entity, $property_name, $throw_if_incomplete = true)
     {
@@ -275,24 +298,36 @@ class CopernicaHelper
         if (!isset($entity[$property_name])) {
             throw new RuntimeException("'$property_name' property is not set; cannot extract embedded entities.");
         }
-        if (!is_array($entity[$property_name])) {
+        $wrapper = $entity[$property_name];
+        if (!is_array($wrapper)) {
             throw new RuntimeException("'$property_name' property is not an array; cannot extract embedded entities.");
         }
-        static::checkEntitiesMetadata($entity[$property_name], [], "'$property_name' property");
+        static::checkEntitiesMetadata($wrapper, [], "'$property_name' property");
 
-        if ($entity[$property_name]['start'] !== 0) {
+        if ($wrapper['start'] !== 0) {
             // This is unexpected; we don't know how embedded entities
             // implement paging and until we do, we disallow this. Supposedly
             // the only way to get a complete list is to perform the separate
             // API call for the specific entities and then call
             // getEntitiesNextBatch() until the set is complete.
-            throw new RuntimeException("Set of entities inside '$property_name' property starts at {$entity[$property_name]['start']}; we cannot handle anything not starting at 0.", 804);
+            throw new RuntimeException("Set of entities inside '$property_name' property starts at {$wrapper['start']}; we cannot handle anything not starting at 0.", 804);
         }
-        if ($throw_if_incomplete && $entity[$property_name]['count'] !== $entity[$property_name]['total']) {
-            throw new RuntimeException("Cannot return the total set of {$entity[$property_name]['totel']} entities inside '$property_name' property; only {$entity[$property_name]['count']} found.", 804);
+        if ($throw_if_incomplete) {
+            if (isset($wrapper['total']) && $wrapper['count'] !== $wrapper['total']) {
+                throw new RuntimeException("Cannot return the total set of {$wrapper['totel']} entities inside '$property_name' property; only {$wrapper['count']} found.", 804);
+            }
+            if (!isset($wrapper['total']) && $wrapper['count'] === $wrapper['limit']) {
+                // We're taking the risk of throwing an unnecessary
+                // exception if limit == total; we can't check that. It's a bit
+                // unfortunate, but by the time the caller hits 'limit' they
+                // are likely to be in trouble anyway. (Making sure that there
+                // is a 'total' value would have saved them only until just one
+                // more embedded entity was added.)
+                throw new RuntimeException("(Likely) cannot return the total set of entities inside '$property_name' property; only {$wrapper['count']} found but the total set is likely larger.", 804);
+            }
         }
 
-        return $entity[$property_name]['data'];
+        return $wrapper['data'];
     }
 
     /**
@@ -342,6 +377,10 @@ class CopernicaHelper
     /**
      * Checks a data structure containing Copernica's 'list metadata'.
      *
+     * This is a static copy of a RestClient method. It's slightly unfortunate
+     * that we need to duplicate this helper code but that's not a reason to
+     * make the classes interdependent yet.
+     *
      * @param array $struct
      *   The structure, which is usually either the JSON-decoded response body
      *   from a GET query, or a property inside an entity which contains
@@ -355,18 +394,19 @@ class CopernicaHelper
      * @throws \RuntimeException
      *   If the result metadata are not successfully verified.
      *
-     * @todo check all @TODOs in the CopernicaRestClient copy / keep in sync.
      */
     protected static function checkEntitiesMetadata(array $struct, array $parameters, $struct_descn)
     {
         // We will throw an exception for any unexpected value. That may seem
         // way too strict but at least we'll know when something changes.
         foreach (['start', 'limit', 'count', 'total', 'data'] as $key) {
-            if (!isset($struct[$key])) {
-                throw new RuntimeException("Unexpected structure in $struct_descn: no '$key' value found.'", 804);
-            }
-            if ($key !== 'data' && !is_numeric($struct[$key])) {
-                throw new RuntimeException("Unexpected structure in $struct_descn: '$key' value (" . json_encode($struct[$key]) . ') is non-numeric.', 804);
+            if ($key !== 'total' || !isset($parameters['total']) || self::isBooleanTrue($parameters['total'])) {
+                if (!isset($struct[$key])) {
+                    throw new RuntimeException("Unexpected structure in $struct_descn: no '$key' value found.'", 804);
+                }
+                if ($key !== 'data' && !is_numeric($struct[$key])) {
+                    throw new RuntimeException("Unexpected structure in $struct_descn: '$key' value (" . json_encode($struct[$key]) . ') is non-numeric.', 804);
+                }
             }
         }
         if (!is_array($struct['data'])) {
@@ -382,14 +422,11 @@ class CopernicaHelper
         if ($struct['start'] !== $expected_start) {
             throw new RuntimeException("Unexpected structure in $struct_descn: 'start' value is " . json_encode($struct['start']) . ' but is expected to be 0.', 804);
         }
-        // We expect the count of data fetched to be exactly equal to the
-        // limit, unless we've fetched all data - then the count can be less.
-        if ($struct['start'] + $struct['count'] == $struct['total']) {
-            if ($struct['count'] > $struct['limit']) {
-                throw new RuntimeException("Unexpected structure in response from Copernica API: 'count' value (" . json_encode($struct['count']) . ") is not equal to 'limit' (" . json_encode($struct['limit']) . ').', 804);
-            }
-        } elseif ($struct['count'] !== $struct['limit']) {
-            throw new RuntimeException("Unexpected structure in response from Copernica API: 'count' value (" . json_encode($struct['count']) . ") is not equal to 'limit' (" . json_encode($struct['limit']) . '), which should be the case when we only fetched part of the result.', 804);
+        if ($struct['count'] > $struct['limit']) {
+            throw new RuntimeException("Unexpected structure in response from Copernica API: 'count' value (" . json_encode($struct['count']) . ") is larger than 'limit' (" . json_encode($struct['limit']) . ').', 804);
+        }
+        if (isset($struct['total']) && $struct['start'] + $struct['count'] > $struct['total']) {
+            throw new RuntimeException("Unexpected structure in $struct_descn: 'total' property (" . json_encode($struct['total']) . ") is smaller than start (" . json_encode($struct['start']) . ") + count (" . json_encode($struct['count']) . ").", 804);
         }
     }
 }

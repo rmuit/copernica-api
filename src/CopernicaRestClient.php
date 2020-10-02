@@ -275,13 +275,6 @@ class CopernicaRestClient
     private $lastEntitiesParameters = [];
 
     /**
-     * The 'total' property in the result from the last getEntities*() call.
-     *
-     * @var int
-     */
-    private $lastEntitiesDatasetTotal = 0;
-
-    /**
      * The start position to be used by the next getEntitiesNextBatch() call.
      *
      * @var int
@@ -289,7 +282,7 @@ class CopernicaRestClient
     private $nextEntitiesDatasetStart = 0;
 
     /**
-     * Constructor.
+     * RestClient constructor.
      *
      * @param string $token
      *   The access token used by the wrapped class.
@@ -745,26 +738,36 @@ class CopernicaRestClient
      *
      * @throws \RuntimeException
      *   If the result metadata are not successfully verified.
-     *
-     * @todo check how we can support parameter total=false; specifying this
-     *   throws exceptions at the moment. According to Copernica, total=false
-     *   speeds things up.
-     * @todo the call for at least Profiles has a dataonly parameter. Check
-     *   what that does and try to support it. (It's also faster.)
      */
     public function getEntities($resource, array $parameters = array())
     {
-        $result = $this->get($resource, $parameters, self::NONE);
+        // We can expect that setting 'total' = false is easier on the API
+        // back end, though we're not sure how much. (From some casual
+        // experimenting, it seems that a decrease in API call completion time
+        // is only noticeable by humans if the dataset size is multiple
+        // hundreds of thousands.) The only tiny advantage is: if the returned
+        // batch contains a number of items equal to the limit AND the last
+        // item in the returned dataset is the last one in the full dataset
+        // (i.e. if the full dataset has a number of items that is exactly a
+        // multiple of the 'limit', provided we always keep 'limit' equal),
+        // then we'll be forced to make an extra call which returns 0 items,
+        // before we discover the dataset was already fully fetched. If
+        // it's significant to prevent that for some reason, then pass 'total'
+        // = true explicitly.
         $this->lastEntitiesResource = $resource;
         $this->lastEntitiesParameters = $parameters;
+        $parameters += ['total' => false];
+        $result = $this->get($resource, $parameters, self::NONE);
 
         $this->checkEntitiesMetadata($result, $parameters, 'response from Copernica API');
 
-        $this->lastEntitiesDatasetTotal = $result['total'];
-        // Remember 'assumed total fetched, according to the start parameter'.
-        $this->nextEntitiesDatasetStart = $result['start'] + $result['count'];
-        if ($this->nextEntitiesDatasetStart > $this->lastEntitiesDatasetTotal) {
-            throw new RuntimeException("Unexpected structure in response from Copernica API: 'total' property (" . json_encode($result['total']) . ") is smaller than next start pointer (" . json_encode($this->nextEntitiesDatasetStart) . ").", 804);
+        // Remember where getEntitiesNextBatch() should start from.
+        if ($result['count'] == $result['limit']) {
+            $this->nextEntitiesDatasetStart = $result['start'] + $result['count'];
+        } else {
+            // count < limit; otherwise we'd have thrown an exception. This
+            // set of entities has no further results.
+            $this->nextEntitiesDatasetStart = -1;
         }
 
         foreach ($result['data'] as $entity) {
@@ -796,9 +799,9 @@ class CopernicaRestClient
             return [];
         }
 
-        // The below should never return an empty array. (It probably would if
-        // $this->nextEntitiesDatasetStart == $this->lastEntitiesDatasetTotal,
-        // but we just returned above without fetching data, in that case.)
+        // If this returns an empty array, that's because we could not see
+        // last time that the dataset was fetched already, to the limit of the
+        // last query.
         return $this->getEntities(
             $this->lastEntitiesResource,
             ['start' => $this->nextEntitiesDatasetStart] + $this->lastEntitiesParameters
@@ -810,8 +813,8 @@ class CopernicaRestClient
      *
      * Code can call this by itself to see whether anything should still be
      * fetched, but just calling getEntitiesNextBatch() immediately is also
-     * fine; that will return an empty array without actually fetching
-     * anything, if the dataset is already complete.
+     * fine; that will return an empty array (hopefully without actually
+     * fetching anything) if the dataset is already complete.
      *
      * @return bool
      *   Indicator of the dataset represented by the previous getEntities() /
@@ -819,41 +822,7 @@ class CopernicaRestClient
      */
     public function lastEntitiesDatasetIsComplete()
     {
-        // The '>' situation would have errored out in getEntities().
-        return $this->nextEntitiesDatasetStart >= $this->lastEntitiesDatasetTotal;
-    }
-
-    /**
-     * Extracts embedded entities from an entity's data.
-     *
-     * @deprecated Use the method in CopernicaHelper instead.
-     */
-    public function getEmbeddedEntities(array $entity, $property_name, $throw_if_incomplete = true)
-    {
-        // We'd return an empty array for a not-set property name, IF we had an
-        // example of a certain expected property not being set at all if the
-        // number of embedded entities is 0.
-        if (!isset($entity[$property_name])) {
-            throw new RuntimeException("'$property_name' property is not set; cannot extract embedded entities.");
-        }
-        if (!is_array($entity[$property_name])) {
-            throw new RuntimeException("'$property_name' property is not an array; cannot extract embedded entities.");
-        }
-        $this->checkEntitiesMetadata($entity[$property_name], [], "'$property_name' property");
-
-        if ($entity[$property_name]['start'] !== 0) {
-            // This is unexpected; we don't know how embedded entities
-            // implement paging and until we do, we disallow this. Supposedly
-            // the only way to get a complete list is to perform the separate
-            // API call for the specific entities and then call
-            // getEntitiesNextBatch() until the set is complete.
-            throw new RuntimeException("Set of entities inside '$property_name' property starts at {$entity[$property_name]['start']}; we cannot handle anything not starting at 0.", 804);
-        }
-        if ($throw_if_incomplete && $entity[$property_name]['count'] !== $entity[$property_name]['total']) {
-            throw new RuntimeException("Cannot return the total set of {$entity[$property_name]['totel']} entities inside '$property_name' property; only {$entity[$property_name]['count']} found.", 804);
-        }
-
-        return $entity[$property_name]['data'];
+        return $this->nextEntitiesDatasetStart == -1;
     }
 
     /**
@@ -871,7 +840,6 @@ class CopernicaRestClient
         return [
             'last_resource' => $this->lastEntitiesResource,
             'last_parameters' => $this->lastEntitiesParameters,
-            'last_total' => $this->lastEntitiesDatasetTotal,
             'next_start' => $this->nextEntitiesDatasetStart,
             'token' => $this->token,
             'version' => $this->version,
@@ -914,10 +882,7 @@ class CopernicaRestClient
         $this->suppressApiCallErrors($state['suppress_errors']);
         $this->lastEntitiesResource = $state['last_resource'];
         $this->lastEntitiesParameters = $state['last_parameters'];
-        $this->lastEntitiesDatasetTotal = $state['last_total'];
         $this->nextEntitiesDatasetStart = $state['next_start'];
-        // We don't know if the current class has the same token/version.
-        unset($this->api);
         if (isset($state['factory_class'])) {
             $this->apiFactoryClassName = $state['factory_class'];
         }
@@ -1144,6 +1109,11 @@ class CopernicaRestClient
     /**
      * Checks a data structure containing Copernica's 'list metadata'.
      *
+     * This will likely keep having only one caller, but it's good to have it
+     * in a separate method - not only because it makes getEntities a bit more
+     * readable but also because this method has an almost verbatim copy in
+     * CopernicaHelper.
+     *
      * @param array $struct
      *   The structure, which is usually either the JSON-decoded response body
      *   from a GET query, or a property inside an entity which contains
@@ -1166,20 +1136,19 @@ class CopernicaRestClient
      * @todo negative 'start' parameter returns the negative integer in 'start'
      *   and zero count/items. Check what we want to do with that: likely not
      *   throw an exception because we want to emulate Copernica?
-     * @todo check how we can support parameter total=false; specifying this
-     *   throws exceptions at the moment. According to Copernica, total=false
-     *   speeds things up.
      */
     private function checkEntitiesMetadata(array $struct, array $parameters, $struct_descn)
     {
         // We will throw an exception for any unexpected value. That may seem
         // way too strict but at least we'll know when something changes.
         foreach (['start', 'limit', 'count', 'total', 'data'] as $key) {
-            if (!isset($struct[$key])) {
-                throw new RuntimeException("Unexpected structure in $struct_descn: no '$key' value found.'", 804);
-            }
-            if ($key !== 'data' && !is_numeric($struct[$key])) {
-                throw new RuntimeException("Unexpected structure in $struct_descn: '$key' value (" . json_encode($struct[$key]) . ') is non-numeric.', 804);
+            if ($key !== 'total' || !isset($parameters['total']) || $this->isBooleanTrue($parameters['total'])) {
+                if (!isset($struct[$key])) {
+                    throw new RuntimeException("Unexpected structure in $struct_descn: no '$key' value found.'", 804);
+                }
+                if ($key !== 'data' && !is_numeric($struct[$key])) {
+                    throw new RuntimeException("Unexpected structure in $struct_descn: '$key' value (" . json_encode($struct[$key]) . ') is non-numeric.', 804);
+                }
             }
         }
         if (!is_array($struct['data'])) {
@@ -1195,15 +1164,37 @@ class CopernicaRestClient
         if ($struct['start'] !== $expected_start) {
             throw new RuntimeException("Unexpected structure in $struct_descn: 'start' value is " . json_encode($struct['start']) . ' but is expected to be 0.', 804);
         }
-        // We expect the count of data fetched to be exactly equal to the
-        // limit, unless we've fetched all data - then the count can be less.
-        if ($struct['start'] + $struct['count'] == $struct['total']) {
-            if ($struct['count'] > $struct['limit']) {
-                throw new RuntimeException("Unexpected structure in response from Copernica API: 'count' value (" . json_encode($struct['count']) . ") is not equal to 'limit' (" . json_encode($struct['limit']) . ').', 804);
-            }
-        } elseif ($struct['count'] !== $struct['limit']) {
-            throw new RuntimeException("Unexpected structure in response from Copernica API: 'count' value (" . json_encode($struct['count']) . ") is not equal to 'limit' (" . json_encode($struct['limit']) . '), which should be the case when we only fetched part of the result.', 804);
+        if ($struct['count'] > $struct['limit']) {
+            throw new RuntimeException("Unexpected structure in $struct_descn: 'count' value (" . json_encode($struct['count']) . ") is larger than 'limit' (" . json_encode($struct['limit']) . ').', 804);
         }
+        if (isset($struct['total']) && $struct['start'] + $struct['count'] > $struct['total']) {
+            throw new RuntimeException("Unexpected structure in $struct_descn: 'total' property (" . json_encode($struct['total']) . ") is smaller than start (" . json_encode($struct['start']) . ") + count (" . json_encode($struct['count']) . ").", 804);
+        }
+    }
+
+    /**
+     * Indicates whether a value converts to True by Copernica.
+     *
+     * This has only been tested for values of the 'total' parameter so far, so
+     * it stays private until we have more use / more evidence of this
+     * conversion being uniformly applicable.
+     */
+    private function isBooleanTrue($value)
+    {
+        if (!is_bool($value)) {
+            if (is_string($value) && !is_numeric($value)) {
+                // Leading/trailing spaces 'falsify' the outcome.
+                $value = in_array(strtolower($value), ['yes', 'true'], true);
+            } elseif (is_scalar($value)) {
+                $value = abs($value) >= 1;
+            } else {
+                // All arrays, no others (because rawurlencode() encodes
+                // objects to empty string).
+                $value = is_array($value);
+            }
+        }
+
+        return $value;
     }
 
     /**
