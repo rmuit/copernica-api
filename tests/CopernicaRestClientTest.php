@@ -13,9 +13,6 @@ use PHPUnit\Framework\TestCase;
  * - test getEntity() for removed entity (throwing exception & suppressing)
  * - Simulate errors in getEntities() to check checkEntitiesMetadata logic.
  *   (By implementing _simulate_strange_response for incomplete entities data)
- * - test 'paging' in getEntities/nextBatch/lastDatasetIsComplete().
- * - test getEmbeddedEntities() on the result of a '/databases' call, after we
- *   implement a response for that in TestApi.
  * (I already know the above works, because of running most of it in
  * production and having most of it covered by higher-level automated tests.
  * So I'm not in an extreme hurry for full test coverage. But I should, just to

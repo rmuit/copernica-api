@@ -56,6 +56,41 @@ class TestApi
     protected static $allowedFieldTypes = ['text' => 1, 'email' => 1, 'select' => 1, 'integer' => 1, 'float' => 1, 'date' => 1, 'datetime' => 1, 'empty_date' => 1, 'empty_datetime' => 1];
 
     /**
+     * Special 'orderby' names for (sub)profiles, as documented by Copernica.
+     *
+     * @var string[]
+     */
+    protected static $specialOrderByNames = ['id' => '_id', 'modified' => '_modified', 'random' => ''];
+
+    /**
+     * 'Special field names' as documented by Copernica.
+     *
+     * When filtering results using the 'Fields parameter', these will be
+     * applied to the innate properties of (sub)profiles rather than the
+     * fields. PLEASE NOTE: as of Oct 2020, a "modified" filter is actually
+     * applied to the "modified" field, not the "modified" property, if such a
+     * field exists. (We don't know about "id" and "code" because those fields
+     * cannot be created.)
+     *
+     * @var string[]
+     */
+    protected static $specialFieldNames = ['id' => ['_id', 'integer'], 'code' => ['_secret', 'text'], 'modified' => ['_modified', 'datetime']];
+
+    /**
+     * Field names that Copernica (apparently) refuses to create.
+     *
+     * As of Oct 2020, I've only tried this in the UI, which gives no error,
+     * but also does not create the field (or rename it, when trying to change
+     * the field name). I'm not sure what the REST API does yet.
+     *
+     * (This variable is not used yet because we have not added field CRUD to
+     * the test API yet.)
+     *
+     * @var string[]
+     */
+    protected static $disallowedFieldNames = ['id', 'code'];
+
+    /**
      * Set to True to throw exceptions on Curl errors / strange HTTP codes.
      *
      * This wants to emulate the behavior of CopernicaRestAPI, to facilitiate
@@ -1878,14 +1913,27 @@ class TestApi
                 //   - 'field ==name' is ignored (because it matches "field ").
                 // - The expression as a whole is still trimmed so
                 //   ' field==name ' is not ignored / does filter on "name".
-                if (!preg_match('/^(.+?)([\=\<\>\!\~]{1,2})(.*)$/', trim($field_statement), $matches)) {
+                if (!preg_match('/^(.+?)([=<>!~]{1,2})(.*)$/', trim($field_statement), $matches)) {
                     continue;
                 }
-                // The live API ignores unknown fields.
-                if (!isset($available_fields[strtolower($matches[1])])) {
+                $field_name = $matches[1];
+                $field_name_lower = strtolower($field_name);
+                // Field names are checked first, because it is possible that
+                // an actual field has a 'special field name' at least in the
+                // case of "modified" - in which case that will be used for
+                // filtering.
+                if (isset($available_fields[$field_name_lower])) {
+                    $field_struct = $available_fields[$field_name_lower];
+                } elseif (isset(static::$specialFieldNames[$field_name_lower])) {
+                    $field_name = static::$specialFieldNames[$field_name_lower][0];
+                    if ($field_name === '_id') {
+                        $field_name = $for_collection ? '_spid' : '_pid';
+                    }
+                    $field_struct = ['type' => static::$specialFieldNames[$field_name_lower][1]];
+                } else {
+                    // The live API ignores unknown fields.
                     continue;
                 }
-                $field_struct = $available_fields[strtolower($matches[1])];
                 // Non-strings need to be 'normalized', which means converting
                 // empty strings to a 'zero' value, and trimming them. Strings
                 // can be skipped because they're already strings (and are not
@@ -1906,9 +1954,11 @@ class TestApi
                     case '<':
                     case '>=':
                     case '<=':
-                        if ($string_type) {
-                            $value = 0;
-                        }
+                        // I don't know why this was here. String fields are
+                        // able to be filtered <= a-string-value.
+                        //if ($string_type) {
+                        //    $value = 0;
+                        //}
                         $operator = $matches[2];
                         break;
 
@@ -1918,7 +1968,7 @@ class TestApi
                         // large amount of testing.
                         // @todo test case sensitivity / collation vs SQLite?
                         if (!$string_type) {
-                            throw new LogicException("Comparison operator $matches[2] in 'fields' parameter has not yet been tested for use with this field typeyet.");
+                            throw new LogicException("Comparison operator $matches[2] in 'fields' parameter has not yet been tested for use with this field type yet.");
                         }
                         $operator = 'LIKE';
                         break;
@@ -1926,17 +1976,18 @@ class TestApi
                     case '!~':
                         // @todo test case sensitivity / collation vs SQLite?
                         if (!$string_type) {
-                            throw new LogicException("Comparison operator $matches[2] in 'fields' parameter has not yet been tested for use with this field typeyet.");
+                            throw new LogicException("Comparison operator $matches[2] in 'fields' parameter has not yet been tested for use with this field type yet.");
                         }
                         $operator = 'NOT LIKE';
                         break;
 
                     default:
+                        // @todo test behavior on live API.
                         throw new LogicException("Comparison operator $matches[2] in 'fields' parameter is not supported by TestApi (yet).");
                 }
                 $pdo_param = 'cond' . count($clauses) . 'x';
                 $pdo_parameters[$pdo_param] = $value;
-                $clauses[] = "$matches[1] $operator :$pdo_param";
+                $clauses[] = "$field_name $operator :$pdo_param";
             }
         }
 
@@ -1973,9 +2024,24 @@ class TestApi
     {
         // We only match known field names so the SQL is safe.
         if (isset($parameters['orderby']) && is_string($parameters['orderby'])) {
-            $available_fields = $this->getFields($id, $for_collection);
-            if (isset($available_fields[strtolower($parameters['orderby'])])) {
-                $default_field = $parameters['orderby'];
+            $orderby_lowered = strtolower($parameters['orderby']);
+            // A note: if a field named "modified" exists, the orderby
+            // parameter igores that fields and applies to the internal
+            // 'modified' property. This is unlike the "fields" parameter (for
+            // filtering) where it does apply to the field.
+            if (isset(static::$specialOrderByNames[$orderby_lowered])) {
+                $default_field = static::$specialOrderByNames[$orderby_lowered];
+                if ($default_field === '_id') {
+                    $default_field = $for_collection ? '_spid' : '_pid';
+                } elseif (!$default_field) {
+                    // We haven't implemented "random" yet.
+                    throw new LogicException("orderby operator {$parameters['orderby']} is not supported by TestApi (yet).");
+                }
+            } else {
+                $available_fields = $this->getFields($id, $for_collection);
+                if (isset($available_fields[$orderby_lowered])) {
+                    $default_field = $parameters['orderby'];
+                }
             }
         }
 
@@ -2969,7 +3035,7 @@ class TestApi
                         }
                     }
                 }
-                // TODO 'CREATE INDEX iii ON tablename (fieldname)' for all indexed fields.
+                // TODO 'CREATE INDEX iii ON tablename (fieldname)' for all indexed fields. (_secret and _modified are also filterable.)
 
                 // In SQLite we need to set case sensitive behavior of LIKE
                 // globally(which is off by default apparently). We haven't

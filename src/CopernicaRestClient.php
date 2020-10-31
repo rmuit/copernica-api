@@ -7,6 +7,8 @@ use RuntimeException;
 
 /**
  * REST API Client for Copernica.
+ *
+ * @TODO why do we have the 'Copernica' prefix? Also Helper?
  */
 class CopernicaRestClient
 {
@@ -248,7 +250,7 @@ class CopernicaRestClient
      *
      * @var string
      */
-    private $token;
+    protected $token;
 
     /**
      * The version of the REST API that should be accessed.
@@ -256,27 +258,6 @@ class CopernicaRestClient
      * @var int
      */
     private $version;
-
-    /**
-     * The resource (relative URI) accessed by the last getEntities() call.
-     *
-     * @var string
-     */
-    private $lastEntitiesResource = '';
-
-    /**
-     * The parameters used for the last getEntities() call.
-     *
-     * @var array
-     */
-    private $lastEntitiesParameters = [];
-
-    /**
-     * The start position to be used by the next getEntitiesNextBatch() call.
-     *
-     * @var int
-     */
-    private $nextEntitiesDatasetStart = 0;
 
     /**
      * RestClient constructor.
@@ -747,22 +728,10 @@ class CopernicaRestClient
         // before we discover the dataset was already fully fetched. If
         // it's significant to prevent that for some reason, then pass 'total'
         // = true explicitly.
-        $this->lastEntitiesResource = $resource;
-        $this->lastEntitiesParameters = $parameters;
         $parameters += ['total' => false];
         $result = $this->get($resource, $parameters, self::NONE);
 
         $this->checkEntitiesMetadata($result, $parameters, 'response from Copernica API');
-
-        // Remember where getEntitiesNextBatch() should start from.
-        if ($result['count'] == $result['limit']) {
-            $this->nextEntitiesDatasetStart = $result['start'] + $result['count'];
-        } else {
-            // count < limit; otherwise we'd have thrown an exception. This
-            // set of entities has no further results.
-            $this->nextEntitiesDatasetStart = -1;
-        }
-
         foreach ($result['data'] as $entity) {
             if (empty($entity['id']) && empty($entity['ID'])) {
                 throw new RuntimeException("One of the entities returned from $resource resource does not contain 'id'.", 803);
@@ -770,52 +739,6 @@ class CopernicaRestClient
         }
 
         return $result['data'];
-    }
-
-    /**
-     * Returns a batch of entities 'following' the last getEntities*() result.
-     *
-     * A set of data that contains more entities than the REST API limit can
-     * handle in one response, can be retrieved by one call to getEntities()
-     * and consecutive calls to getEntitiesNextBatch(), until this returns an
-     * empty array.
-     *
-     * @return array[]|false
-     *   The 'data' part of the JSON-decoded response body, i.e. an array of
-     *   entities - or empty array if no more items are left in the batch.
-     *   False if exceptions were suppressed for '400' errors and no
-     *   getEntities() call was done earlier.
-     */
-    public function getEntitiesNextBatch()
-    {
-        if ($this->lastEntitiesDatasetIsComplete()) {
-            return [];
-        }
-
-        // If this returns an empty array, that's because we could not see
-        // last time that the dataset was fetched already, to the limit of the
-        // last query.
-        return $this->getEntities(
-            $this->lastEntitiesResource,
-            ['start' => $this->nextEntitiesDatasetStart] + $this->lastEntitiesParameters
-        );
-    }
-
-    /**
-     * Checks if the last dataset was fetched completely.
-     *
-     * Code can call this by itself to see whether anything should still be
-     * fetched, but just calling getEntitiesNextBatch() immediately is also
-     * fine; that will return an empty array (hopefully without actually
-     * fetching anything) if the dataset is already complete.
-     *
-     * @return bool
-     *   Indicator of the dataset represented by the previous getEntities() /
-     *   getEntitiesNextBatch() being fully fetched already.
-     */
-    public function lastEntitiesDatasetIsComplete()
-    {
-        return $this->nextEntitiesDatasetStart == -1;
     }
 
     /**
@@ -1069,7 +992,7 @@ class CopernicaRestClient
      *   and zero count/items. Check what we want to do with that: likely not
      *   throw an exception because we want to emulate Copernica?
      */
-    private function checkEntitiesMetadata(array $struct, array $parameters, $struct_descn)
+    protected function checkEntitiesMetadata(array $struct, array $parameters, $struct_descn)
     {
         // We will throw an exception for any unexpected value. That may seem
         // way too strict but at least we'll know when something changes.
@@ -1193,8 +1116,6 @@ class CopernicaRestClient
                         break;
 
                     case 'No entity with supplied ID':
-                        // We have various 'missing entity' / 'missing ID'
-                        // errors with the same code, all for distinct calls.
                         $code = 801;
                         break;
                 }

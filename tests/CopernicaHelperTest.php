@@ -9,6 +9,12 @@ use PHPUnit\Framework\TestCase;
 
 /**
  * Tests for CopernicaHelper.
+ *
+ * @todo Testing getEmbeddedEntities() and rekeyEntities() doesn't seem super
+ *   important, but it's probably a good practical test to use them on the
+ *   output of a '/databases' (or collections/fields) API call... once we
+ *   actually implement those in TestApi. (Maybe that test should be in
+ *   ApiBehaviorTest; in that case refer there from this comment.)
  */
 class CopernicaHelperTest extends TestCase
 {
