@@ -20,7 +20,7 @@ use UnexpectedValueException;
  *   this class.
  *
  * Of all the test classes in this directory, this is the 'base' test. It does
- * not use other classes (like CopernicaRestClient); it tests whether TestApi
+ * not use other classes (like RestClient); it tests whether TestApi
  * is OK so that other test classes can assume it is, and use it.
  *
  * Rule of thumb: tests that compare the outcome of API calls vs. contents in
@@ -337,10 +337,10 @@ class TestApiBaseTest extends TestCase
      * Some put() code may still be tested here; on the other hand, if we
      * already pu
      *
-     * Similar tests might be implemented in CopernicaRestClientTest but their
-     * purpose would only be to exercise CopernicaRestClient logic - likely to
-     * test specific error situations... so they have an implicit dependency on
-     * this test / on TestApi working flawlessly.
+     * Similar tests might be implemented in RestClientTest but their purpose
+     * would only be to exercise RestClient logic - likely to test specific
+     * error situations... so they have an implicit dependency on this test /
+     * on TestApi working flawlessly.
      */
     public function testProfileCrudBasics()
     {

@@ -7,19 +7,19 @@ use PDO;
 use PHPUnit\Framework\TestCase;
 
 /**
- * Tests for the CopernicaRestClient class.
+ * Tests for the RestClient class.
  *
  * This should still:
  * - test 'paging' in getEntities/nextBatch/lastDatasetIsComplete().
- * - test backupState() and restoreState() to a new CopernicaRestClient, @TODO
+ * - test backupState() and restoreState() to a new RestClient, @TODO
  *   probably right before calling getEntitiesnextBatch() on the new instance.
  *   (We're already testing that they work for a few other properties.)
  *
- * This class implicitly depends on CopernicaRestClientTest and ApiBehaviorTest;
- * we have to trust that both the client class and the API behave as expected
- * and are fully tested, so we can concentrate on just BatchedEntitiesFetcher
- * logic. (We have not created a phpunit.xml specifically to encode this
- * dependency / order because it's unlikely this will cause issues.)
+ * This class implicitly depends on RestClientTest and ApiBehaviorTest; we have
+ * to trust that both the client class and the API behave as expected and are
+ * fully tested, so we can concentrate on just BatchedEntitiesFetcher logic.
+ * (We have not created a phpunit.xml specifically to encode this dependency /
+ * order because it's unlikely this will cause issues.)
  *
  * @todo the above isn't strictly true yet; it assumes that all intricacies of
  *   e.g. 'orderby' behavior and filtering are explicitly tested in

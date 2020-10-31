@@ -2,7 +2,7 @@
 
 namespace CopernicaApi\Tests;
 
-use CopernicaApi\CopernicaHelper;
+use CopernicaApi\Helper;
 use DateTime;
 use DateTimeZone;
 use LogicException;
@@ -36,14 +36,16 @@ use RuntimeException;
  * this test class is the 'most canonical' source of truth re. API behavior
  * now, which we use as a specification. (But which might change over time.)
  *
- * Dependency wise, it would be cleanest if this didn't use CopernicaRestClient
+ * Dependency wise, it would be cleanest if this didn't use RestClient
  * but just ran directly against CopernicaRestAPI / TestApi. (That means that
- * this class can contain tests which form a base for CopernicaRestClientTest,
- * which can depend on the combination of TestApiBaseTest + this class being
- * OK. This would be good for never having to duplicate tests between e.g.
+ * this class can contain tests which form a base for RestClientTest, which can
+ * depend on the combination of TestApiBaseTest + this class being OK. This
+ * would be good for never having to duplicate tests between e.g.
  * TestApiBaseTest::testProfileCrudBasics() and testProfileCrud(). If it really
  * becomes much easier to use CopernicaRestAPI in this class, we may need to
- * rethink this. But it looks like that isn't necessary.)
+ * rethink this. But it looks like that isn't necessary... until we write the
+ * next major version, which will supposedly retire CopernicaRestAPI / leave
+ * only a very thin layer to be able to keep using TestApi.)
  *
  * @todo
  *   - The "intended purpose" means we should not initialize a database
@@ -135,7 +137,7 @@ class ApiBehaviorTest extends TestCase
 
         // Exception messages have a wrapper 'METHOD RESOURCE returned HTTP
         // code 400. Response contents: "HEADERS JSON-in-body"', because that's
-        // what CopernicaRestAPI throws for the benefit of CopernicaRestClient.
+        // what CopernicaRestAPI throws for the benefit of RestClient.
         // We're not really interested in testing the whole structure; just
         // test for the error message including quotes (which is an indication
         // it's JSON encoded).
@@ -1166,7 +1168,7 @@ class ApiBehaviorTest extends TestCase
         } else {
             // We don't know the timezone used by the real API and we don't
             // know if there's even a setting. Take our default.
-            $timezone = CopernicaHelper::TIMEZONE_DEFAULT;
+            $timezone = Helper::TIMEZONE_DEFAULT;
         }
         $date->setTimezone(new DateTimeZone($timezone));
         return $date;

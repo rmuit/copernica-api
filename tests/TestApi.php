@@ -2,7 +2,7 @@
 
 namespace CopernicaApi\Tests;
 
-use CopernicaApi\CopernicaHelper;
+use CopernicaApi\Helper;
 use DateTime;
 use DateTimeZone;
 use InvalidArgumentException;
@@ -97,7 +97,7 @@ class TestApi
      * writing the 'behavior tests' which we want to be able run against both
      * this class and the live API, to verify both against each other. In
      * order to do that, those tests should set this property to True (just
-     * like CopernicaRestClient always does), because keeping this False on
+     * like RestClient always does), because keeping this False on
      * CopernicaRestAPI just isn't informative enough to guarantee behavior.
      *
      * This class may opt to throw LogicExceptions in certain circumstances
@@ -210,7 +210,8 @@ class TestApi
             // We can define an environment variable before running tests, if
             // we want to use another database to inspect contents later. (At
             // the moment, only SQLite because that's the only db that we've
-            // defined the CREATE TABLE commands for.)
+            // defined the CREATE TABLE commands for.) Some tests may blow up,
+            // likely because we're not reinitializing things; haven't checked.
             if (!empty($_ENV['COPERNICA_TEST_PDO_DSN'])) {
                 $this->pdoConnection = new PDO(
                     $_ENV['COPERNICA_TEST_PDO_DSN'],
@@ -815,7 +816,7 @@ class TestApi
      * We've been going back and forth about making this configurable. At the
      * moment, the setter is gone and this returns a constant (which is in a
      * non-test class, so we'll need to figure out what we want, if we change
-     * that. Note this class is using CopernicaHelper::normalizeInputValue()
+     * that. Note this class is using Helper::normalizeInputValue()
      * which uses that constant).
      *
      * @return string
@@ -823,7 +824,7 @@ class TestApi
      */
     public function getTimezone()
     {
-        return CopernicaHelper::TIMEZONE_DEFAULT;
+        return Helper::TIMEZONE_DEFAULT;
     }
 
     /**
@@ -1066,9 +1067,9 @@ class TestApi
 
         // The distinguishing property of many CopernicaRestAPI exceptions is
         // that they include "Response contents: <body and maybe headers>".
-        // CopernicaRestClient may get those from the exception message and
+        // RestClient may get those from the exception message and
         // just return the body. (And we know this shady practice but it is the
-        // way for CopernicaRestClient to _optionally_ throw an exception.) So
+        // way for RestClient to _optionally_ throw an exception.) So
         // it's important to add some response contents with newlines.
         switch ($type) {
             case 'curl':
@@ -1101,7 +1102,7 @@ class TestApi
                             break;
 
                         case 'PUT/303':
-                            // Regular 303 (where CopernicaRestClient throws no
+                            // Regular 303 (where RestClient throws no
                             // exception) has no body.
                             $payload = "HTTP/1.1 $real_code See Other (Not Really)\r\nLocation: https://test.test/someentity/1\r\n\r\n";
                             break;
@@ -1136,7 +1137,7 @@ class TestApi
      * Throws exception with code 303 and 'current resource', or returns true.
      *
      * When we rewrite CopernicaRestApi logic re. throwing exceptions and move
-     * it into CopernicaRestClient for simplification, and remove the
+     * it into RestClient for simplification, and remove the
      * throwOnError property as a result, this method goes away.
      *
      * @return true
@@ -1202,7 +1203,7 @@ class TestApi
             $payload = "{\"error\":{\"message\":\r\n" . json_encode($error_message) . '}}';
             if ($method !== 'GET') {
                 if ($method === 'PUT' && $http_code == 303) {
-                    throw new InvalidArgumentException("Not sure how to throw 303.. (Do we include error message in body? Location header? A combination of both supposedly never happens and will break CopernicaRestClient.)");
+                    throw new InvalidArgumentException("Not sure how to throw 303.. (Do we include error message in body? Location header? A combination of both supposedly never happens and will break RestClient.)");
                 }
                 $payload = "HTTP/1.1 $http_code No descriptive string\r\nX-Fake-Header: fakevalue\r\nX-Fake-Header2: fakevalue2\r\n\r\n$payload";
             }
@@ -1558,7 +1559,7 @@ class TestApi
                 throw new LogicException("TestApi does not implement 'interests' for {$this->currentMethod} {$this->currentResource} yet.");
             }
             if (isset($data['secret'])) {
-                $secret = CopernicaHelper::normalizeSecretInput($data['secret']);
+                $secret = Helper::normalizeSecretInput($data['secret']);
             }
             // Unlike POST and PUT /database/ID/profiles, an illegal 'fields'
             // array does not generate an error.
@@ -1683,7 +1684,7 @@ class TestApi
             // Possible data: 'fields' and 'secret'. Others are ignored; a 303
             // response is returned.
             if (isset($data['secret'])) {
-                $secret = CopernicaHelper::normalizeSecretInput($data['secret']);
+                $secret = Helper::normalizeSecretInput($data['secret']);
             }
             // Unlike POST and PUT /database/ID/profiles, an illegal 'fields'
             // array does not generate an error.
@@ -1939,7 +1940,7 @@ class TestApi
                 // can be skipped because they're already strings (and are not
                 // supposed to be trimmed).
                 $string_type = !in_array($field_struct['type'], ['integer', 'float', 'date', 'datetime', 'empty_date', 'empty_datetime'], true);
-                $value = $string_type ? $matches[3] : CopernicaHelper::normalizeInputValue($matches[3], $field_struct);
+                $value = $string_type ? $matches[3] : Helper::normalizeInputValue($matches[3], $field_struct);
                 switch ($matches[2]) {
                     case '==':
                         $operator = '=';
@@ -2238,7 +2239,7 @@ class TestApi
             if (isset($fields[$field_name])) {
                 $field_struct = $fields[$field_name];
                 // Use the non-lowercased real fieldname as key.
-                $normalized[$field_struct['name']] = CopernicaHelper::normalizeInputValue($value, $field_struct);
+                $normalized[$field_struct['name']] = Helper::normalizeInputValue($value, $field_struct);
             }
         }
 
@@ -2999,14 +3000,17 @@ class TestApi
                 //   for updating each record, after having read first. Also,
                 //   it would make most GET requests need a table join to get
                 //   the metadata. Even though it'd be much easier to select
-                //   ALL subprofiles for a certain profiles, ALL removed
+                //   ALL subprofiles for a certain profile, ALL removed
                 //   subprofiles, etc. But I don't know if that's ever
                 //   necessary. Maybe wait until there's a real need.
+                // AUTOINCREMENT would need to be explicitly specified to
+                // prevent reuse of the highest table record if that was
+                // deleted... if deleting it was possible. But it isn't.
                 $this->pdoConnection->exec("CREATE TABLE profile_db (
-                    profile_id  INTEGER PRIMARY KEY AUTOINCREMENT,
+                    profile_id  INTEGER PRIMARY KEY,
                     database_id INTEGER NOT NULL)");
                 $this->pdoConnection->exec("CREATE TABLE subprofile_coll (
-                    subprofile_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    subprofile_id INTEGER PRIMARY KEY,
                     collection_id INTEGER NOT NULL)");
                 // We don't need an index on db id; we have the database
                 // specific profile table for that.

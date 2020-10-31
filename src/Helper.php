@@ -11,7 +11,7 @@ use UnexpectedValueException;
 /**
  * Static utility method(s) for code that deals with Copernica
  */
-class CopernicaHelper
+class Helper
 {
     /**
      * The timezone which the Copernica API backend operates in.
@@ -234,8 +234,16 @@ class CopernicaHelper
     {
         if (isset($value) && is_scalar($value)) {
             // Convert non-ASCII to question marks. I think this approximates
-            // well enough (if not equals) what the live API is doing.
-            $value = mb_convert_encoding($value, "ASCII");
+            // well enough (if not equals) what the live API is doing. It's
+            // quite unlikely that the mbstring extension is not installed.
+            if (extension_loaded('mbstring')) {
+                $value = mb_convert_encoding($value, "ASCII");
+            } else {
+                // ...it's so unlikely that I don't care this doesn't really
+                // work as intended. It sanitizes things, but replaces multi=
+                // byte characters by multiple question marks
+                $value = preg_replace('/[\x00-\x1F\x80-\xFF]/', '?', $value);
+            }
         } else {
             $value = '1';
         }

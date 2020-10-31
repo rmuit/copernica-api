@@ -2,12 +2,12 @@
 
 namespace CopernicaApi\Tests;
 
-use CopernicaApi\CopernicaRestClient;
+use CopernicaApi\RestClient;
 use PDO;
 use PHPUnit\Framework\TestCase;
 
 /**
- * Tests for the CopernicaRestClient class.
+ * Tests for the RestClient class.
  *
  * This should still:
  * - test getEntity() for removed entity (throwing exception & suppressing)
@@ -29,10 +29,10 @@ use PHPUnit\Framework\TestCase;
  * Anything that smells like it's testing 'logic / behavior of the API' should
  * likely be in ApiBehaviorTest.
  */
-class CopernicaRestClientTest extends TestCase
+class RestClientTest extends TestCase
 {
     /**
-     * Tests that CopernicaRestClient throws the expected exceptions.
+     * Tests that RestClient throws the expected exceptions.
      *
      * Or rather: that it passes through the exceptions thrown in TestApi
      * without modification, by default. So we can test non-defaults after.
@@ -71,7 +71,7 @@ class CopernicaRestClientTest extends TestCase
         // just keeping the code around in case we re-change our mind.)
         $create_message = function ($code, $method_for_original_exception = false) {
             // If only a JSON body with an error is returned as the response
-            // contents, then CopernicaRestClient re-throws the exception
+            // contents, then RestClient re-throws the exception
             // with the message becoming just the message inside that body,
             // prepended with "Copernica API request failed: ".
             $original_error_message = "Simulated message returned along with HTTP code $code.";
@@ -85,16 +85,16 @@ class CopernicaRestClientTest extends TestCase
         // basic exception handling: if a Curl error or a non-2XX HTTP response
         // is returned, it throws an exception. All those HTTP codes are
         // treated equally by CopernicaRestApi (and it could be up to
-        // CopernicaRestClient to handle things differently).
+        // RestClient to handle things differently).
         $data = [];
         foreach (['get', 'post', 'put', 'delete'] as $class_method) {
             // We have not paid any attention to different Curl errors. An
-            // error is an error. If CopernicaRestClient starts interpreting
+            // error is an error. If RestClient starts interpreting
             // them, this test can be amended. (7 = Could not connect)
             $http_method = strtoupper($class_method);
             $data[] = [$class_method, '_simulate_exception/curl/7', 7, "CURL returned code 7 (\"Simulated error, description N/A\") for $http_method _simulate_exception/curl/7. Response contents: \""];
 
-            // CopernicaRestClient also doesn't differentiate between types of
+            // RestClient also doesn't differentiate between types of
             // HTTP return code yet, but let's add a few error and non-error
             // types to preempt future changes.
             // https://www.copernica.com/en/documentation/restv2/rest-requests
@@ -102,14 +102,14 @@ class CopernicaRestClientTest extends TestCase
             foreach ([100, 301, 303, 400, 403, 404, 500, 503] as $code) {
                 if ($class_method === 'put' && $code === 303) {
                     // This has special handling; exception, will always be
-                    // intercepted by CopernicaRestClient.
+                    // intercepted by RestClient.
                     continue;
                 } elseif ($class_method === 'delete' && $code === 400) {
                     // 400 for DELETE is handled by 2 different constants.
                     // Check that suppressing one value does not prevent
                     // throwing the exceptino for the other situation.
-                    $data[] = [$class_method, "_simulate_exception/http/$code", $code, $create_message($code), CopernicaRestClient::DELETE_RETURNS_ALREADY_REMOVED];
-                    $data[] = [$class_method, "_simulate_exception/http/$code-alreadyremoved", $code, 'Copernica API request failed: FAKE-ENTITY has already been removed', CopernicaRestClient::DELETE_RETURNS_BAD_REQUEST];
+                    $data[] = [$class_method, "_simulate_exception/http/$code", $code, $create_message($code), RestClient::DELETE_RETURNS_ALREADY_REMOVED];
+                    $data[] = [$class_method, "_simulate_exception/http/$code-alreadyremoved", $code, 'Copernica API request failed: FAKE-ENTITY has already been removed', RestClient::DELETE_RETURNS_BAD_REQUEST];
                 } else {
                     $data[] = [$class_method, "_simulate_exception/http/$code", $code, $create_message($code)];
                 }
@@ -119,25 +119,25 @@ class CopernicaRestClientTest extends TestCase
             // wee if that works. Also, check that this (HTTP 400) is not
             // covered by the general "strange HTTP code" suppression.
             // INVALID-TOKEN is not a url; it's recognized by the test method.
-            $data[] = [$class_method, 'INVALID-TOKEN', 800, 'Copernica API request failed: Invalid access token', CopernicaRestClient::POST_RETURNS_STRANGE_HTTP_CODE];
+            $data[] = [$class_method, 'INVALID-TOKEN', 800, 'Copernica API request failed: Invalid access token', RestClient::POST_RETURNS_STRANGE_HTTP_CODE];
         }
         // 303 for PUT usually does not throw an exception, but we emulate a
         // subset of the strange circumstances that make
         // checkResponseSeeOther() give up. Also, test that the exception is
         // not suppressed by the regular constants. (It has its own.) The
         // difference in exception message comes from the first having a
-        // standard "error" structure in the body, which CopernicaRestClient
+        // standard "error" structure in the body, which RestClient
         // extracts and uses for a message of a re-thrown exception. The other
         // one with the headers + empty body is the original exception as it
         // would be thrown from CopernicaRestAPI.
-        $data[] = ['put', '_simulate_exception/http/303-withbody', 303, 'Copernica API request failed: Simulated message returned along with HTTP code 303.', CopernicaRestClient::PUT_RETURNS_STRANGE_HTTP_CODE];
-        $data[] = ['put', '_simulate_exception/http/303-nolocation', 303, "PUT _simulate_exception/http/303-nolocation returned HTTP code 303. Response contents: \"", CopernicaRestClient::PUT_RETURNS_BAD_REQUEST];
+        $data[] = ['put', '_simulate_exception/http/303-withbody', 303, 'Copernica API request failed: Simulated message returned along with HTTP code 303.', RestClient::PUT_RETURNS_STRANGE_HTTP_CODE];
+        $data[] = ['put', '_simulate_exception/http/303-nolocation', 303, "PUT _simulate_exception/http/303-nolocation returned HTTP code 303. Response contents: \"", RestClient::PUT_RETURNS_BAD_REQUEST];
 
         // There's one other exception in CopernicaRestApi: for invalid JSON.
         $data[] = ['get', '_simulate_exception/invalid_json', 0, 'Unexpected input: '];
 
         // Cases where CopernicaRestApi doesn't throw an exception, but returns
-        // data that should make CopernicaRestClient throw one:
+        // data that should make RestClient throw one:
 
         // post() returning both false and true. Note that
         // - post() getting true is something we need to test, because it's
@@ -154,13 +154,13 @@ class CopernicaRestClientTest extends TestCase
     }
 
     /**
-     * Tests that CopernicaRestClient handles some calls/exceptions as expected.
+     * Tests that RestClient handles some calls/exceptions as expected.
      *
      * These are three kinds of cases:
      * 1. API calls that make TestApi (CopernicaRestAPI) throw an exception,
-     *    which CopernicaRestClient should catch and handle differently because
+     *    which RestClient should catch and handle differently because
      *    of the specified 'suppress exceptions' state.
-     * 2. API calls whose response by default makes CopernicaRestClient throw
+     * 2. API calls whose response by default makes RestClient throw
      *    an exception but not with the specified 'suppress exceptions' state.
      * 3. API calls whose response by default throws no exception - where we've
      *    created a fake TestApi endpoint to prove that.
@@ -200,7 +200,7 @@ class CopernicaRestClientTest extends TestCase
         };
 
         // Expected values are those defined in TestApi::simulateException().
-        // If we suppress the exception, CopernicaRestClient does not process
+        // If we suppress the exception, RestClient does not process
         // the returned result (by e.g. decoding JSON / looking for error msg).
         $create_return_value = function ($code, $with_headers) {
             $payload = "{\"error\":\r\n{\"message\":\"Simulated message returned along with HTTP code $code.\"}}";
@@ -210,71 +210,71 @@ class CopernicaRestClientTest extends TestCase
             return $payload;
         };
 
-        $run_tests('post', '_simulate_exception/curl/7', CopernicaRestClient::POST_RETURNS_CURL_ERROR, '');
-        $run_tests('put', '_simulate_exception/curl/7', CopernicaRestClient::PUT_RETURNS_CURL_ERROR, '');
-        $run_tests('delete', '_simulate_exception/curl/7', CopernicaRestClient::DELETE_RETURNS_CURL_ERROR, '');
-        $run_tests('get', '_simulate_exception/curl/7', CopernicaRestClient::GET_RETURNS_CURL_ERROR, '');
+        $run_tests('post', '_simulate_exception/curl/7', RestClient::POST_RETURNS_CURL_ERROR, '');
+        $run_tests('put', '_simulate_exception/curl/7', RestClient::PUT_RETURNS_CURL_ERROR, '');
+        $run_tests('delete', '_simulate_exception/curl/7', RestClient::DELETE_RETURNS_CURL_ERROR, '');
+        $run_tests('get', '_simulate_exception/curl/7', RestClient::GET_RETURNS_CURL_ERROR, '');
         foreach (
             [
-                ['post', 100, CopernicaRestClient::POST_RETURNS_STRANGE_HTTP_CODE, $create_return_value(100, true)],
-                ['post', 301, CopernicaRestClient::POST_RETURNS_STRANGE_HTTP_CODE, $create_return_value(301, true)],
-                ['post', 303, CopernicaRestClient::POST_RETURNS_STRANGE_HTTP_CODE, $create_return_value(303, true)],
-                ['post', 304, CopernicaRestClient::POST_RETURNS_STRANGE_HTTP_CODE, $create_return_value(304, true)],
-                ['post', 400, CopernicaRestClient::POST_RETURNS_BAD_REQUEST, $create_return_value(400, true)],
-                ['post', 403, CopernicaRestClient::POST_RETURNS_STRANGE_HTTP_CODE, $create_return_value(403, true)],
-                ['post', 404, CopernicaRestClient::POST_RETURNS_STRANGE_HTTP_CODE, $create_return_value(404, true)],
-                ['post', 500, CopernicaRestClient::POST_RETURNS_STRANGE_HTTP_CODE, $create_return_value(500, true)],
-                ['post', 503, CopernicaRestClient::POST_RETURNS_STRANGE_HTTP_CODE, $create_return_value(503, true)],
+                ['post', 100, RestClient::POST_RETURNS_STRANGE_HTTP_CODE, $create_return_value(100, true)],
+                ['post', 301, RestClient::POST_RETURNS_STRANGE_HTTP_CODE, $create_return_value(301, true)],
+                ['post', 303, RestClient::POST_RETURNS_STRANGE_HTTP_CODE, $create_return_value(303, true)],
+                ['post', 304, RestClient::POST_RETURNS_STRANGE_HTTP_CODE, $create_return_value(304, true)],
+                ['post', 400, RestClient::POST_RETURNS_BAD_REQUEST, $create_return_value(400, true)],
+                ['post', 403, RestClient::POST_RETURNS_STRANGE_HTTP_CODE, $create_return_value(403, true)],
+                ['post', 404, RestClient::POST_RETURNS_STRANGE_HTTP_CODE, $create_return_value(404, true)],
+                ['post', 500, RestClient::POST_RETURNS_STRANGE_HTTP_CODE, $create_return_value(500, true)],
+                ['post', 503, RestClient::POST_RETURNS_STRANGE_HTTP_CODE, $create_return_value(503, true)],
 
-                ['put', 100, CopernicaRestClient::PUT_RETURNS_STRANGE_HTTP_CODE, $create_return_value(100, true)],
-                ['put', 301, CopernicaRestClient::PUT_RETURNS_STRANGE_HTTP_CODE, $create_return_value(301, true)],
+                ['put', 100, RestClient::PUT_RETURNS_STRANGE_HTTP_CODE, $create_return_value(100, true)],
+                ['put', 301, RestClient::PUT_RETURNS_STRANGE_HTTP_CODE, $create_return_value(301, true)],
                 // Regular 303 never throws exception for PUT, because it's
                 // standard to return a 303. (It's regular return value is an
                 // entity's relative URL.) Non-regular 303s need suppressing.
-                ['put', 303, CopernicaRestClient::NONE, 'someentity/1'],
-                ['put', '303-withbody', CopernicaRestClient::PUT_RETURNS_STRANGE_SEE_OTHER, "HTTP/1.1 303 See Other (Not Really)\r\nLocation: https://test.test/someentity/1\r\n\r\n{\"error\":\r\n{\"message\":\"Simulated message returned along with HTTP code 303.\"}}"],
-                ['put', '303-nolocation', CopernicaRestClient::PUT_RETURNS_STRANGE_SEE_OTHER, "HTTP/1.1 303 See Other (Not Really)\r\nX-Fake-Header: fakevalue\r\n\r\n"],
-                ['put', 304, CopernicaRestClient::PUT_RETURNS_STRANGE_HTTP_CODE, $create_return_value(304, true)],
-                ['put', 400, CopernicaRestClient::PUT_RETURNS_BAD_REQUEST, $create_return_value(400, true)],
-                ['put', 403, CopernicaRestClient::PUT_RETURNS_STRANGE_HTTP_CODE, $create_return_value(403, true)],
-                ['put', 404, CopernicaRestClient::PUT_RETURNS_STRANGE_HTTP_CODE, $create_return_value(404, true)],
-                ['put', 500, CopernicaRestClient::PUT_RETURNS_STRANGE_HTTP_CODE, $create_return_value(500, true)],
-                ['put', 503, CopernicaRestClient::PUT_RETURNS_STRANGE_HTTP_CODE, $create_return_value(503, true)],
+                ['put', 303, RestClient::NONE, 'someentity/1'],
+                ['put', '303-withbody', RestClient::PUT_RETURNS_STRANGE_SEE_OTHER, "HTTP/1.1 303 See Other (Not Really)\r\nLocation: https://test.test/someentity/1\r\n\r\n{\"error\":\r\n{\"message\":\"Simulated message returned along with HTTP code 303.\"}}"],
+                ['put', '303-nolocation', RestClient::PUT_RETURNS_STRANGE_SEE_OTHER, "HTTP/1.1 303 See Other (Not Really)\r\nX-Fake-Header: fakevalue\r\n\r\n"],
+                ['put', 304, RestClient::PUT_RETURNS_STRANGE_HTTP_CODE, $create_return_value(304, true)],
+                ['put', 400, RestClient::PUT_RETURNS_BAD_REQUEST, $create_return_value(400, true)],
+                ['put', 403, RestClient::PUT_RETURNS_STRANGE_HTTP_CODE, $create_return_value(403, true)],
+                ['put', 404, RestClient::PUT_RETURNS_STRANGE_HTTP_CODE, $create_return_value(404, true)],
+                ['put', 500, RestClient::PUT_RETURNS_STRANGE_HTTP_CODE, $create_return_value(500, true)],
+                ['put', 503, RestClient::PUT_RETURNS_STRANGE_HTTP_CODE, $create_return_value(503, true)],
 
-                ['delete', 100, CopernicaRestClient::DELETE_RETURNS_STRANGE_HTTP_CODE, $create_return_value(100, true)],
-                ['delete', 301, CopernicaRestClient::DELETE_RETURNS_STRANGE_HTTP_CODE, $create_return_value(301, true)],
-                ['delete', 303, CopernicaRestClient::DELETE_RETURNS_STRANGE_HTTP_CODE, $create_return_value(303, true)],
-                ['delete', 304, CopernicaRestClient::DELETE_RETURNS_STRANGE_HTTP_CODE, $create_return_value(304, true)],
+                ['delete', 100, RestClient::DELETE_RETURNS_STRANGE_HTTP_CODE, $create_return_value(100, true)],
+                ['delete', 301, RestClient::DELETE_RETURNS_STRANGE_HTTP_CODE, $create_return_value(301, true)],
+                ['delete', 303, RestClient::DELETE_RETURNS_STRANGE_HTTP_CODE, $create_return_value(303, true)],
+                ['delete', 304, RestClient::DELETE_RETURNS_STRANGE_HTTP_CODE, $create_return_value(304, true)],
                 // DELETE HTTP 400 is handled by either of 2 constants,
                 // depending on the exception message.
-                ['delete', 400, CopernicaRestClient::DELETE_RETURNS_BAD_REQUEST, $create_return_value(400, true)],
-                ['delete', '400-alreadyremoved', CopernicaRestClient::DELETE_RETURNS_ALREADY_REMOVED, "HTTP/1.1 400 No descriptive string\r\nX-Fake-Header: fakevalue\r\n\r\n{\"error\":\r\n{\"message\":\"FAKE-ENTITY has already been removed\"}}"],
-                ['delete', 403, CopernicaRestClient::DELETE_RETURNS_STRANGE_HTTP_CODE, $create_return_value(403, true)],
-                ['delete', 404, CopernicaRestClient::DELETE_RETURNS_STRANGE_HTTP_CODE, $create_return_value(404, true)],
-                ['delete', 500, CopernicaRestClient::DELETE_RETURNS_STRANGE_HTTP_CODE, $create_return_value(500, true)],
-                ['delete', 503, CopernicaRestClient::DELETE_RETURNS_STRANGE_HTTP_CODE, $create_return_value(503, true)],
+                ['delete', 400, RestClient::DELETE_RETURNS_BAD_REQUEST, $create_return_value(400, true)],
+                ['delete', '400-alreadyremoved', RestClient::DELETE_RETURNS_ALREADY_REMOVED, "HTTP/1.1 400 No descriptive string\r\nX-Fake-Header: fakevalue\r\n\r\n{\"error\":\r\n{\"message\":\"FAKE-ENTITY has already been removed\"}}"],
+                ['delete', 403, RestClient::DELETE_RETURNS_STRANGE_HTTP_CODE, $create_return_value(403, true)],
+                ['delete', 404, RestClient::DELETE_RETURNS_STRANGE_HTTP_CODE, $create_return_value(404, true)],
+                ['delete', 500, RestClient::DELETE_RETURNS_STRANGE_HTTP_CODE, $create_return_value(500, true)],
+                ['delete', 503, RestClient::DELETE_RETURNS_STRANGE_HTTP_CODE, $create_return_value(503, true)],
 
-                ['get', 100, CopernicaRestClient::GET_RETURNS_STRANGE_HTTP_CODE, $create_return_value(100, false)],
-                ['get', 301, CopernicaRestClient::GET_RETURNS_STRANGE_HTTP_CODE, $create_return_value(301, false)],
-                ['get', 303, CopernicaRestClient::GET_RETURNS_STRANGE_HTTP_CODE, $create_return_value(303, false)],
-                ['get', 304, CopernicaRestClient::GET_RETURNS_STRANGE_HTTP_CODE, $create_return_value(304, false)],
-                ['get', 400, CopernicaRestClient::GET_RETURNS_BAD_REQUEST, $create_return_value(400, false)],
-                ['get', 403, CopernicaRestClient::GET_RETURNS_STRANGE_HTTP_CODE, $create_return_value(403, false)],
-                ['get', 404, CopernicaRestClient::GET_RETURNS_STRANGE_HTTP_CODE, $create_return_value(404, false)],
-                ['get', 500, CopernicaRestClient::GET_RETURNS_STRANGE_HTTP_CODE, $create_return_value(500, false)],
-                ['get', 503, CopernicaRestClient::GET_RETURNS_STRANGE_HTTP_CODE, $create_return_value(503, false)],
+                ['get', 100, RestClient::GET_RETURNS_STRANGE_HTTP_CODE, $create_return_value(100, false)],
+                ['get', 301, RestClient::GET_RETURNS_STRANGE_HTTP_CODE, $create_return_value(301, false)],
+                ['get', 303, RestClient::GET_RETURNS_STRANGE_HTTP_CODE, $create_return_value(303, false)],
+                ['get', 304, RestClient::GET_RETURNS_STRANGE_HTTP_CODE, $create_return_value(304, false)],
+                ['get', 400, RestClient::GET_RETURNS_BAD_REQUEST, $create_return_value(400, false)],
+                ['get', 403, RestClient::GET_RETURNS_STRANGE_HTTP_CODE, $create_return_value(403, false)],
+                ['get', 404, RestClient::GET_RETURNS_STRANGE_HTTP_CODE, $create_return_value(404, false)],
+                ['get', 500, RestClient::GET_RETURNS_STRANGE_HTTP_CODE, $create_return_value(500, false)],
+                ['get', 503, RestClient::GET_RETURNS_STRANGE_HTTP_CODE, $create_return_value(503, false)],
             ] as $value
         ) {
             list($class_method, $http_code, $constant, $expected_value) = $value;
             $run_tests($class_method, "_simulate_exception/http/$http_code", $constant, $expected_value);
         }
 
-        $run_tests('get', '_simulate_exception/invalid_json', CopernicaRestClient::GET_RETURNS_INVALID_JSON, '["invalid_json}');
+        $run_tests('get', '_simulate_exception/invalid_json', RestClient::GET_RETURNS_INVALID_JSON, '["invalid_json}');
 
         // Cases 2 and 3 as per the phpdoc:
-        $run_tests('post', '_simulate_strange_response/true', CopernicaRestClient::POST_RETURNS_NO_ID, true);
+        $run_tests('post', '_simulate_strange_response/true', RestClient::POST_RETURNS_NO_ID, true);
 
-        $run_tests('get', '_simulate_strange_response/non-array', CopernicaRestClient::GET_RETURNS_NON_ARRAY, 'This is not a json decoded body.');
+        $run_tests('get', '_simulate_strange_response/non-array', RestClient::GET_RETURNS_NON_ARRAY, 'This is not a json decoded body.');
     }
 
     /**
@@ -285,7 +285,7 @@ class CopernicaRestClientTest extends TestCase
      * @param bool $hack_api_for_invalid_token
      *   (Optional) hack TestApi class to return "invalid token" errors.
      *
-     * @return \CopernicaApi\CopernicaRestClient
+     * @return \CopernicaApi\RestClient
      */
     protected function getClient($suppress_exceptions_default = null, $hack_api_for_invalid_token = false)
     {

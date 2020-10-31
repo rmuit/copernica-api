@@ -9,7 +9,7 @@ use RuntimeException;
 /**
  * Helper class for fetching a set of entities in batches.
  */
-class BatchedEntitiesFetcher extends CopernicaRestClient
+class BatchedEntitiesFetcher extends RestClient
 {
     /**
      * This is supposedly the maximum 'limit' parameter that any call will use.
@@ -249,7 +249,7 @@ class BatchedEntitiesFetcher extends CopernicaRestClient
                             $this->orderedFetchImpossibleReason = "The dataset was supposedly ordered descending by '$order_field' but the last few entities in the previous batch showed increasing values for '$order_field.";
                             // We might use 802 for various things that should
                             // be impossible. (It's reusing a code not used by
-                            // CopernicaRestClient::getEntities().)
+                            // RestClient::getEntities().)
                             $this->orderedFetchImpossibleCode = 802;
                         }
                     } elseif ($previous_value < $last_ordered_value) {

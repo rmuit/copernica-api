@@ -7,10 +7,8 @@ use RuntimeException;
 
 /**
  * REST API Client for Copernica.
- *
- * @TODO why do we have the 'Copernica' prefix? Also Helper?
  */
-class CopernicaRestClient
+class RestClient
 {
     /**
      * Equivalent to "none", if one likes using constants instead of integers.
@@ -356,7 +354,7 @@ class CopernicaRestClient
      *   If any non-supressed Curl error, nonstandard HTTP response code or
      *   unexpected response headers are encountered.
      *
-     * @see CopernicaRestClient::suppressApiCallErrors()
+     * @see RestClient::suppressApiCallErrors()
      */
     public function post($resource, array $data = array(), $suppress_errors = null)
     {
@@ -426,7 +424,7 @@ class CopernicaRestClient
      *   If any non-suppressed Curl error, nonstandard HTTP response code or
      *   unexpected response headers are encountered.
      *
-     * @see CopernicaRestClient::suppressApiCallErrors()
+     * @see RestClient::suppressApiCallErrors()
      */
     public function put($resource, array $data, array $parameters = array(), $suppress_errors = null)
     {
@@ -504,7 +502,7 @@ class CopernicaRestClient
      *   If any non-supressed Curl error, nonstandard HTTP response code or
      *   unexpected response headers are encountered.
      *
-     * @see CopernicaRestClient::suppressApiCallErrors()
+     * @see RestClient::suppressApiCallErrors()
      */
     public function delete($resource, $suppress_errors = null)
     {
@@ -558,19 +556,24 @@ class CopernicaRestClient
      *   The JSON-decoded response body; can be other things and/or a non-array
      *   value if throwing exceptions is suppressed.
      *
-     * @see CopernicaRestClient::suppressApiCallErrors()
-     * @see CopernicaRestClient::getEntity()
-     * @see CopernicaRestClient::getEntities()
+     * @see RestClient::suppressApiCallErrors()
+     * @see RestClient::getEntity()
+     * @see RestClient::getEntities()
      */
     public function get($resource, array $parameters = array(), $suppress_errors = null)
     {
-        // API NOTES:
-        // - Curl occasionally returns error 7 "Failed to connect" (and get()
-        //   returns a string value, I assume empty string).
-        // - We've also seen error 52 "Empty reply from server" - for a
+        // API NOTES: (strange location, may need to move to README)
+        // - Curl occasionally returns error 7 "Failed to connect" (and
+        //   getApi()->get() returns a string value, I assume empty string).
+        // - ~Jun 2020: We've seen error 52 "Empty reply from server" - for a
         //   'subprofiles' query for a 'large' collection. This suggests
         //   timeout-like conditions are possible on the server end, which
         //   ideally should return a 4xx/5xx HTTP code instead of 'empty'.
+        // - ~Oct 2020: We've seen HTTP 503 (Service Unavailable) returning a
+        //   HTML body with title "Loadbalancer Error" and a header mentioning
+        //   "too many requests to handle".
+        // - ~Oct 2020: We've also seen HTTP 504 (gateway timeout) returning
+        //   the same HTML body. This may or may not be replacing the Curl 52?
         if (!isset($suppress_errors)) {
             $suppress_errors = $this->suppressApiCallErrors;
         }
@@ -586,7 +589,7 @@ class CopernicaRestClient
             // same for non-strings. Don't specify resource because the API
             // wouldn't.
             if (empty($resource) || !is_string($resource)) {
-                throw new RuntimeException('Copernica API request failed: Invalid methd.', 400);
+                throw new RuntimeException('Copernica API request failed: Invalid method.', 400);
             }
             $result = $api->get($resource, $parameters);
         } catch (RuntimeException $e) {
@@ -967,7 +970,7 @@ class CopernicaRestClient
      * This will likely keep having only one caller, but it's good to have it
      * in a separate method - not only because it makes getEntities a bit more
      * readable but also because this method has an almost verbatim copy in
-     * CopernicaHelper.
+     * Helper.
      *
      * @param array $struct
      *   The structure, which is usually either the JSON-decoded response body

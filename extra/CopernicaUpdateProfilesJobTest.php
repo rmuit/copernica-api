@@ -26,7 +26,7 @@
  *   making 'their' synchronization available for free.
  */
 
-use CopernicaApi\CopernicaRestClient;
+use CopernicaApi\RestClient;
 use CopernicaApi\Tests\TestApi;
 use CopernicaApi\Tests\TestRestClient;
 use PHPUnit\Framework\TestCase;
@@ -2080,8 +2080,8 @@ class CopernicaUpdateProfilesJobTest extends TestCase
         unset($GLOBALS['drunkins_log_test_stack']);
         unset($GLOBALS['drunkins_log_test_screen']);
         // We need to reset the job because it's the only way to reset the
-        // CoprenicaRestClient client class for the next job- which retains a
-        // reference to an old TestApi class with an old database schema.
+        // RestClient client class for the next job- which retains a reference
+        // to an old TestApi class with an old database schema.
         $this->getJob(false);
     }
 
@@ -2216,8 +2216,8 @@ class CopernicaUpdateProfilesJobTest extends TestCase
                 'dependencies' => [
                     'copernica_client' => new TestRestClient($api)
                 ],
-                // The class doesn't use this (because CopernicaRestClient is
-                // already instantiated) but still checks its presence.
+                // The class doesn't use this (because RestClient is already
+                // instantiated) but still checks its presence.
                 'copernica_token' => 'testtoken',
                 'cache_profiles_by_key' => $this->jobUsesProfileCache('key'),
             ];

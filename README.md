@@ -9,23 +9,20 @@ This project contains
 
 ## Usage
 
-Use the CopernicaRestClient class; act as if CopernicaRestAPI does not exist.
+Use the RestClient class; act as if CopernicaRestAPI does not exist.
 
-Only the basic API methods in CopernicaRestClient are documented; the rest is
-left for developers to discover if they feel so inclined.
-
-CopernicaRestClient contains get() / post() / put() and delete() calls (just like
-the standard CopernicaRestAPI); it also contains two extra calls getEntity()
-and getEntities() which do some extra checks and are guaranteed to return an
+RestClient contains get() / post() / put() and delete() calls (just like the
+standard CopernicaRestAPI); it also contains two extra calls getEntity() and
+getEntities() which do some extra checks and are guaranteed to return an
 'entity' or 'list of entities' instead. (An 'entity' is something like a
 profile / subprofile / emailing / database; likely anything that has an ID
 value.) It is hopefully self evident which of the three 'get' methods
 can best be used, based on the API endpoint.
 ```php
-use CopernicaApi\CopernicaHelper;
-use CopernicaApi\CopernicaRestClient;
+use CopernicaApi\Helper;
+use CopernicaApi\RestClient;
 
-$client = new CopernicaRestClient(TOKEN);
+$client = new RestClient(TOKEN);
 
 $new_id = $client->post("database/$db_id/profiles", ['fields' => ['email' => 'rm@wyz.biz']]);
 
@@ -52,7 +49,7 @@ $stats = $client->get("publisher/emailing/$id/statistics");
 $profile = $client->getEntity("profile/$id");
 // If we want to also have entity data returned (with all fields being empty
 // strings) if the entity was 'removed' from Copernica:
-$profile = $client->getEntity("profile/$id", [], CopernicaRestClient::GET_ENTITY_IS_REMOVED);
+$profile = $client->getEntity("profile/$id", [], RestClient::GET_ENTITY_IS_REMOVED);
 
 // Get a list of entities; this will return only the relevant 'data' part from
 // the response: (If we want to have the full structure including start / count
@@ -69,7 +66,7 @@ while ($next_batch = $client->getEntitiesNextBatch()) {
 // If we want to access the mailings by ID, here's a quick helper
 // method. (For mailings this is likely not useful; for e.g. profiles it might
 // be - and the second argument needs to be "ID" there.)
-$mailings = CopernicaHelper::rekeyEntities($mailings, 'id');
+$mailings = Helper::rekeyEntities($mailings, 'id');
 ```
 
 The response of some API calls contain lists of other entities inside an entity.
@@ -89,12 +86,12 @@ $collection_fields = CopernicaHelper::getEmbeddedEntities($collections[$a_collec
 // collection, it is recommended to call the dedicated API endpoint instead.
 ```
 
-### Error handling (is imperfect)
+### Error handling
 
-If CopernicaRestClient methods receive an invalid or unrecognized response /
-fail to get any response from the API, they throw an exception. Callers can
-influence this behavior and make the class method just return the response
-instead. Things to know:
+If RestClient methods receive an invalid or unrecognized response / fail to
+get any response from the API, they throw an exception. Callers can influence
+this behavior and make the class method just return the response instead.
+Things to know:
 
 - The behavior can be influenced globally by setting certain types of errors
   to 'suppress' (i.e. not throw exceptions for), using
@@ -115,29 +112,29 @@ instead. Things to know:
     returned without throwing an exception: see above example code.
   - By default an exception is thrown if we try to re-delete an entity which
     was deleted earlier. This exception can be suppressed by passing
-    CopernicaRestClient::DELETE_RETURNS_ALREADY_REMOVED to the second argument
-    of `delete()` or setting it using `suppressApiCallErrors()`. In this case,
-    the `delete()` call will return the full headers and body (including the
-    JSON encoded error message). This return value can be ignored and the fact
-    that the call returns normally can be treated as 'success'.
+    RestClient::DELETE_RETURNS_ALREADY_REMOVED to the second argument of
+    `delete()` or setting it using `suppressApiCallErrors()`. In this case, the
+    `delete()` call will return the full headers and body (including the JSON
+    encoded error message). This return value can be ignored, and the fact that
+    the call returns normally can be treated as 'success'.
 
-- Some API endpoints behave in unknown ways. CopernicaRestClient throws
-  exceptions by default for unknown behavior; the intention is to never return
-  a value to the caller if it can't be sure how to treat that value. This might
-  however cause exceptions for 'valid' responses. Possible examples:
+- Some API endpoints behave in unknown ways. RestClient throws exceptions by
+  default for unknown behavior; the intention is to never return a value to the
+  caller if it can't be sure how to treat that value. This might however cause
+  exceptions for 'valid' responses. Possible examples:
   - The standard CopernicaRestApi code seems to suggest that not all responses
     to POST requests contain an "X-Created" header containing the ID of a newly
     created entity. At the moment, the absence of this header will cause an
     exception (so the caller can be sure it gets an actual ID returned by
     default). If you run into cases where this is not OK: pass
-    CopernicaRestClient::POST_RETURNS_NO_ID to the third argument of `post()`
-    or set it using `suppressApiCallErrors()`. (We know of some calls which do
-    this, but they are undocumented POST equivalents of PUT calls. We should
-    really be using the documented PUT calls - so we don't mind that these
-    throw exceptions.)
+    RestClient::POST_RETURNS_NO_ID to the third argument of `post()` or set it
+    using `suppressApiCallErrors()`. (We know of some calls which do this, but
+    they are undocumented POST equivalents of PUT calls. We should really be
+    using the documented PUT calls - so we don't mind that these throw
+    exceptions.)
 
 Any time you hit an exception that you need to work around (by e.g. fiddling
-with these constants) but you think actually the class should handle this
+with these constants), but you think actually the class should handle this
 better: feel free to file a bug report.
 
 ## Some more details
@@ -151,17 +148,17 @@ API client class).
   Copernica website (REST API v2 documentation - REST API example), with only a
   few changes.
 
-- A CopernicaRestClient class which wraps around CopernicaRestAPI. Some
-  comments reflect gaps (around detailed error reporting) which cannot be
-  improved yet without further detailed knowledge about API responses. See
-  examples above.
+- A RestClient class which wraps around CopernicaRestAPI. Some comments reflect
+  gaps (around detailed error reporting) which cannot be improved yet without
+  further detailed knowledge about API responses (see examples above), though
+  these have almost disappeared in version 2.
 
 - A 'test implementation' of the Copernica API, i.e. a class that can be used
   instead of CopernicaRestAPI and that stores data internally. And PHPUnit
   tests which use this test API.
 
 The 'test API' should enable writing tests for your own processes which use
-CopernicaRestClient. (See TestRestClient.)
+RestClient. (See TestRestClient.)
 
 The extra/ directory may contain example tests/other code I wrote for my own
 processes.
@@ -170,7 +167,7 @@ processes.
 
 It is recommended to not use CopernicaRestAPI directly. I'm using it but
 keeping it in a separate file, for a combination of overlapping reasons:
-- Even though Copernica's API servers are quite stable and the API behavior is
+- Even though Copernica's API servers are quite stable, and the API behavior is
   documented in https://www.copernica.com/en/documentation/restv2/rest-requests,
   there are still unknowns. (See "error handling" above.) So, I was afraid of
   upsetting my live processes by moving completely away from the standard code
@@ -189,25 +186,21 @@ The approach does have disadvantages, though:
   throw an exception for anything possibly-strange and have those constants to
   suppress them) has created a tight coupling between both classes.
 - The division of responsibilities between CopernicaRestAPI and
-  CopernicaRestClient is suboptimal / should ideally be rewritten. Indications
-  of this:
+  RestClient is suboptimal / should ideally be rewritten. Indications of this:
   - Some 'communication from the API to the client class' is done through
     exceptions. This results in the many constants to suppress exceptions
     (which are much more in number / more illogical than needed if the code
     were set up differently), and the fact that the exception message must now
-    contain the full response body in order for CopernicaRestClient to access
-    it.
-  - At the moment it is impossible to for CopernicaRestClient to get to the
-    headers of responses to GET requests, because they are not inside exception
-    messages.
+    contain the full response body in order for RestClient to access it.
+  - At the moment it is impossible to for RestClient to get to the headers of
+    responses to GET requests, because they are not inside exception messages.
 
 It's likely that the next step in the evolution of this code will be to bite
 the bullet and get rid of CopernicaRestAPI / make it only a very thin layer
 (only to enable emulating API calls by tests). All this is unimportant for 'the
-99.99% case' though, which should only use CopernicaRestClient directly and
-doesn't need to use the illogical constants. It could take years until the next
-rewrite as long as the current code just works, for all practical applications
-we encounter.
+99.99% case' though, which should only use RestClient directly and doesn't need
+to use the illogical constants. It could take years until the next rewrite, as
+long as the current code just works for all practical applications we encounter.
 
 ### Extra branches
 
@@ -215,10 +208,10 @@ we encounter.
 - 'copernica-changed' holds the patches to it (except for the addition of the
   namespace, which is done in 'master'):
   - An extra public property which enables throwing an exception when any
-    non-2xx HTTP response is returned. (This enables CopernicaRestClient to do
-    stricter checks... even when that means we need to do extra work to catch
-    the exception for HTTP 303s which are always returned for PUT requests. It
-    also enables us to extract and return the location header for PUT requests,
+    non-2xx HTTP response is returned. (This enables RestClient to do stricter
+    checks... even when that means we need to do extra work to catch the
+    exception for HTTP 303s which are always returned for PUT requests. It also
+    enables us to extract and return the location header for PUT requests,
     which is significant if they create a new entity.)
   - Proper handling of array parameters like 'fields'.*
 
@@ -309,7 +302,7 @@ What I think has much more practical value (generally when dealing with remote
 APIs) than wrapping array data into separate PHP classes, is doing all
 necessary checks which code needs to do repeatedly on returned results, so that
 a caller 1) doesn't need to deal with those; 2) can be absolutely sure that the
-data returend by a client class is valid. (I favor being really strict and
+data returned by a client class is valid. (I favor being really strict and
 throwing exceptions for any unexpected data, for reason 2.)
 
 So: it would be important to me to integrate the strict checks I have made in

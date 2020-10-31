@@ -2,13 +2,13 @@
 
 namespace CopernicaApi\Tests;
 
-use CopernicaApi\CopernicaHelper;
+use CopernicaApi\Helper;
 use DateTime;
 use DateTimeZone;
 use PHPUnit\Framework\TestCase;
 
 /**
- * Tests for CopernicaHelper.
+ * Tests for Helper.
  *
  * @todo Testing getEmbeddedEntities() and rekeyEntities() doesn't seem super
  *   important, but it's probably a good practical test to use them on the
@@ -16,7 +16,7 @@ use PHPUnit\Framework\TestCase;
  *   actually implement those in TestApi. (Maybe that test should be in
  *   ApiBehaviorTest; in that case refer there from this comment.)
  */
-class CopernicaHelperTest extends TestCase
+class HelperTest extends TestCase
 {
     /**
      * Tests 'normalization' of input values to values we want to store.
@@ -53,7 +53,7 @@ class CopernicaHelperTest extends TestCase
             // - The data providers are apparently executed before all tests,
             //   and our tests take several seconds to execute.
             // The below is basically a copy of normalizeInputValue() :-/
-            $tz_obj = new DateTimeZone(CopernicaHelper::TIMEZONE_DEFAULT);
+            $tz_obj = new DateTimeZone(Helper::TIMEZONE_DEFAULT);
             $date = new DateTime($expected_value[0], $tz_obj);
             $date->setTimezone($tz_obj);
 
@@ -62,10 +62,10 @@ class CopernicaHelperTest extends TestCase
             $date2->setTimestamp($date->getTimestamp() + 1);
             $expected_value = [$date->format($expected_value[1]), $date2->format($expected_value[1])];
 
-            $value = CopernicaHelper::normalizeInputValue($input_value, $field_struct);
+            $value = Helper::normalizeInputValue($input_value, $field_struct);
             $this->assertTrue(in_array($value, $expected_value, true), "$value is not among expected values " . implode(', ', $expected_value));
         } else {
-            $value = CopernicaHelper::normalizeInputValue($input_value, $field_struct);
+            $value = Helper::normalizeInputValue($input_value, $field_struct);
             $this->assertSame($expected_value, $value);
         }
     }

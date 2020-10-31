@@ -2,7 +2,7 @@
 
 namespace CopernicaApi\Tests;
 
-use CopernicaApi\CopernicaRestClient;
+use CopernicaApi\RestClient;
 
 /**
  * RestClient which connects to TestApi.
@@ -12,7 +12,7 @@ use CopernicaApi\CopernicaRestClient;
  * class, but so far it's still simpler than having a factory class (we've
  * tried) and it's not worth making setApi a public method... yet?
  */
-class TestRestClient extends CopernicaRestClient
+class TestRestClient extends RestClient
 {
     public function __construct(TestApi $api)
     {
