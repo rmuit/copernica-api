@@ -28,7 +28,7 @@
 
 use CopernicaApi\CopernicaRestClient;
 use CopernicaApi\Tests\TestApi;
-use CopernicaApi\Tests\TestApiFactory;
+use CopernicaApi\Tests\TestRestClient;
 use PHPUnit\Framework\TestCase;
 
 // phpcs:disable
@@ -93,6 +93,7 @@ if (!function_exists('__drunkins_log')) {
 
 // This is the structure of my Drupal 7 site (because noone else will probably
 // run these tests anyway). Include all dependencies of the Drunkins job.
+require_once(__DIR__ . '/../../../../modules/contrib/drunkins/classes/DrunkinsProcessSummaryTrait.inc');
 require_once(__DIR__ . '/../../../../modules/contrib/drunkins/classes/fetcher.inc');
 require_once(__DIR__ . '/../../../../modules/contrib/drunkins/classes/job.inc');
 require_once(__DIR__ . '/../../../../modules/custom/ygsync/CopernicaUpdateProfilesJob.php');
@@ -105,8 +106,8 @@ require_once(__DIR__ . '/../../../../modules/custom/ygsync/CopernicaSubprofileCo
 require_once(__DIR__ . '/SqliteKeyValueStoreManager.php');
 require_once(__DIR__ . '/PdoKeyValueStore.php');
 // Not always autoloaded on my test system:
-require_once(__DIR__ . '/../tests/TestApiFactory.php');
 require_once(__DIR__ . '/../tests/TestApi.php');
+require_once(__DIR__ . '/../tests/TestRestClient.php');
 
 // phpcs:enable
 
@@ -153,13 +154,6 @@ class CopernicaUpdateProfilesJobTest extends TestCase
      */
     const COLLECTION_ID = 45;
     const COLLECTION2_ID = 58;
-
-    /**
-     * Fake Copernica token used with TestApi. Value doesn't matter.
-     *
-     * @var string
-     */
-    const TOKEN = 'MyTestToken';
 
     /**
      * Determines whether a job returned by getJob() uses a local profile cache.
@@ -848,26 +842,18 @@ class CopernicaUpdateProfilesJobTest extends TestCase
             ]
         ];
         $api = new TestApi($structure, null, true);
-        // This is how we keep this API 'environment' for CopernicaRestApi:
-        TestApiFactory::$testApis[self::TOKEN] = $api;
         // getHighestCopernicaValue() does not depend on any settings; it just
         // fetches entities from Copernica.
-        // testKeyFieldValueWasNeverProcessedBefore() depends on '*_serial'.
-        $more_settings = [
-            'copernica_profile_key_field_serial' => true,
-            'copernica_collections' => [
-                self::COLLECTION_ID => ['key_field_serial' => true]
-            ],
-        ];
+        // testKeyFieldValueWasNeverProcessedBefore() depends on 'serial'.
         // (A confession: there's ugliness in getJob() which makes it not do
         // a good job of creating a new table for the cache/state backend
         // unless the _first_ call to getJob() actually uses a cache/state
         // backend. And I'm lazy. So the order of the following two lines is
         // important.)
         $this->setJobUsesProfileCache(['serial' => true]);
-        $job = $this->getJob('magento_import');
+        $job = $this->getJob('magento_import', [], $api);
         $this->setJobUsesProfileCache([]);
-        $job_noserial = $this->getJob('magento_import');
+        $job_noserial = $this->getJob('magento_import', [], $api);
         // Call start() to initialize context, but don't fetch items. We likely
         // don't even need an initialized context here, but don't want to have
         // to think about it.
@@ -887,7 +873,7 @@ class CopernicaUpdateProfilesJobTest extends TestCase
             'email' => 'rm@wyz.biz', 'name' => 'me',
             self::COLLECTION_ID => ['OrderId' => 4, 'Total' => 9.99, 'Status' => 'pending'],
         ];
-        $this->getJob()->processItem($item, $job_context);
+        $this->getJob('', [], $api)->processItem($item, $job_context);
 
         // Existing but not-filled values return null, not e.g. 0.
         $this->assertSame(null, $job->getHighestCopernicaValue('magentocustomerid'));
@@ -907,7 +893,7 @@ class CopernicaUpdateProfilesJobTest extends TestCase
         $this->assertSame(false, $job->keyFieldValueWasNeverProcessedBefore(4, self::COLLECTION_ID));
         $this->assertSame(true, $job->keyFieldValueWasNeverProcessedBefore(5, self::COLLECTION_ID));
         $this->assertSame(false, $job->keyFieldValueWasNeverProcessedBefore(5, self::COLLECTION_ID));
-        $this->getJob()->processItem(['magentocustomerid' => 7], $job_context);
+        $this->getJob('', [], $api)->processItem(['magentocustomerid' => 7], $job_context);
         $this->assertSame(true, $job->keyFieldValueWasNeverProcessedBefore(9));
         $this->assertSame(false, $job->keyFieldValueWasNeverProcessedBefore(9));
         // Implications on API calls are tested in testMagentoImport().
@@ -966,11 +952,9 @@ class CopernicaUpdateProfilesJobTest extends TestCase
             ]
         ];
         $api = new TestApi($structure, null, true);
-        // This is how we keep this API 'environment' for CopernicaRestApi:
-        TestApiFactory::$testApis[self::TOKEN] = $api;
         // Setup (which, ironically, already exercises getMainProfilesByKey()):
         // Call start() to initialize context, but don't fetch items.
-        $job__mail = $this->getJob('action_log', ['copernica_profile_key_field' => 'email', 'duplicate_updates' => true]);
+        $job__mail = $this->getJob('action_log', ['copernica_profile_key_field' => 'email', 'duplicate_updates' => true], $api);
         $job_context = ['drunkins_override_fetch' => ['anything']];
         $items_not_fetched = $job__mail->start($job_context);
 
@@ -997,7 +981,7 @@ class CopernicaUpdateProfilesJobTest extends TestCase
 
         // Then get a job with 'main_id' as key field, to insert duplicate
         // e-mail addresses.
-        $job__id = $this->getJob('action_log', ['copernica_profile_key_field' => 'main_id']);
+        $job__id = $this->getJob('action_log', ['copernica_profile_key_field' => 'main_id'], $api);
         $job__id->processItem(['main_id' => 3, 'email' => '1@example.com'], $job_context);
         $job__id->processItem(['main_id' => 1, 'email' => '1@example.com'], $job_context);
         $this->assertSame(
@@ -1014,7 +998,7 @@ class CopernicaUpdateProfilesJobTest extends TestCase
         $GLOBALS['drunkins_log_test_threshold'] = WATCHDOG_NOTICE;
 
         // Now get a job with two key fields.
-        $job__2 = $this->getJob('action_log', ['copernica_profile_key_field' => ['main_id', 'email'], 'duplicate_updates' => true]);
+        $job__2 = $this->getJob('action_log', ['copernica_profile_key_field' => ['main_id', 'email'], 'duplicate_updates' => true], $api);
         // This should not update anything (same values):
         $job__2->processItem(['main_id' => 3, 'email' => '1@example.com'], $job_context);
         $this->assertSame([], $api->getApiUpdateLog(['POST', 'PUT', 'DELETE']));
@@ -1048,7 +1032,7 @@ class CopernicaUpdateProfilesJobTest extends TestCase
         $api->resetApiUpdateLog();
         $GLOBALS['drunkins_log_test_stack'] = [];
         // ...and just 1 if 'duplicate_updates' is not set.
-        $job__mail1 = $this->getJob('action_log');
+        $job__mail1 = $this->getJob('action_log', [], $api);
         $job__mail1->processItem(['first_name' => 'You', 'email' => '1@example.com'], $job_context);
         $log = $api->getApiUpdateLog(['POST', 'PUT', 'DELETE']);
         $this->assertSame(1, count($log));
@@ -1176,12 +1160,9 @@ class CopernicaUpdateProfilesJobTest extends TestCase
             ]
         ];
         $api = new TestApi($structure, null, true);
-        // This is how we keep this API 'environment' for CopernicaRestApi:
-        TestApiFactory::$testApis[self::TOKEN] = $api;
-        $database_id = self::DATABASE_ID;
         // Call start() to initialize context, but don't fetch items.
         $job_context = ['drunkins_override_fetch' => ['anything']];
-        $items_not_fetched = $this->getJob('id')->start($job_context);
+        $items_not_fetched = $this->getJob('id', [], $api)->start($job_context);
 
         // We won't test a separate job without field settings, as 'text' is
         // effectively the same as 'no settings'.
@@ -1211,12 +1192,12 @@ class CopernicaUpdateProfilesJobTest extends TestCase
                 'myString' => ['type' => 'integer', 'zero_can_overwrite' => false],
             ],
         ];
-        $job_regular = $this->getJob('id', $regular_field_settings);
-        $job_prevent = $this->getJob('id', ['prevent_overwrite_profile_fields' => true] + $regular_field_settings);
-        $job_itemzeroempty = $this->getJob('id', $itemzeroempty_field_settings);
-        $job_switched_regular = $this->getJob('id', $switched_field_settings);
-        $job_switched_prevent = $this->getJob('id', ['prevent_overwrite_profile_fields' => true] + $switched_field_settings);
-        $job_switched_itemzeroempty = $this->getJob('id', $switched_itemzeroempty_field_settings);
+        $job_regular = $this->getJob('id', $regular_field_settings, $api);
+        $job_prevent = $this->getJob('id', ['prevent_overwrite_profile_fields' => true] + $regular_field_settings, $api);
+        $job_itemzeroempty = $this->getJob('id', $itemzeroempty_field_settings, $api);
+        $job_switched_regular = $this->getJob('id', $switched_field_settings, $api);
+        $job_switched_prevent = $this->getJob('id', ['prevent_overwrite_profile_fields' => true] + $switched_field_settings, $api);
+        $job_switched_itemzeroempty = $this->getJob('id', $switched_itemzeroempty_field_settings, $api);
 
         $this->assertProfileUpdate(['', ''], ['0', ''], $job_regular, $job_context, $api);
         // prevent_overwrite_fields does not prevent overwriting empty values.
@@ -1330,14 +1311,12 @@ class CopernicaUpdateProfilesJobTest extends TestCase
             ]
         ];
         $api = new TestApi($structure, null, true);
-        // This is how we keep this API 'environment' for CopernicaRestApi:
-        TestApiFactory::$testApis[self::TOKEN] = $api;
         $database_id = self::DATABASE_ID;
         $collection_id = self::COLLECTION_ID;
 
         // Call start() to initialize context, but don't fetch items.
         $job_context = ['drunkins_override_fetch' => ['anything']];
-        $items_not_fetched = $this->getJob('action_log')->start($job_context);
+        $items_not_fetched = $this->getJob('action_log', [], $api)->start($job_context);
         // For this job configuration, an item's profile fields do not have
         // the literal Copernica field names; they are mapped inside the job.
         // The subprofile data do have the Copernica field names.
@@ -1367,7 +1346,7 @@ class CopernicaUpdateProfilesJobTest extends TestCase
             "$collection_id:TYpe" => 'facebook',
         ];
         $GLOBALS['drunkins_log_test_threshold'] = WATCHDOG_WARNING;
-        $this->getJob()->processItem($item, $job_context);
+        $this->getJob('', [], $api)->processItem($item, $job_context);
         // As long as we use SQLite we can assume this. Otherwise we may need
         // to derive it from a get(), or just from getApiUpdateLog().
         $profile_id = 1;
@@ -1420,7 +1399,7 @@ class CopernicaUpdateProfilesJobTest extends TestCase
                 'TYPE' => 'email',
             ]
         ];
-        $this->getJob()->processItem($item, $job_context);
+        $this->getJob('', [], $api)->processItem($item, $job_context);
         if ($this->jobUsesProfileCache('key')) {
             $this->assertSame(
                 ["POST profile/$profile_id/subprofiles/$collection_id"],
@@ -1454,12 +1433,12 @@ class CopernicaUpdateProfilesJobTest extends TestCase
                 'Type' => 'email',
             ]
         ];
-        $this->getJob()->processItem($item, $job_context);
+        $this->getJob('', [], $api)->processItem($item, $job_context);
         $this->assertSame(
             ["PUT profile/$profile_id/fields", "POST profile/$profile_id/subprofiles/$collection_id"],
             $api->getApiUpdateLog(['POST', 'PUT', 'DELETE'])
         );
-        $api_client = new CopernicaRestClient(self::TOKEN, '\CopernicaApi\Tests\TestApiFactory');
+        $api_client = new TestRestClient($api);
         $check_profiles = $api_client->getEntities("database/$database_id/profiles", ['fields' => ['Firstname==Piet', 'Lastname==Muit']]);
         $this->assertSame(1, count($check_profiles));
 
@@ -1473,7 +1452,7 @@ class CopernicaUpdateProfilesJobTest extends TestCase
               'Firstname' => ['compare_case_insensitive' => true],
               'Lastname' => ['compare_case_insensitive' => true],
             ],
-        ])->processItem($item, $job_context);
+        ], $api)->processItem($item, $job_context);
         $this->assertSame(
             ["POST profile/$profile_id/subprofiles/$collection_id"],
             $api->getApiUpdateLog(['POST', 'PUT', 'DELETE'])
@@ -1492,7 +1471,7 @@ class CopernicaUpdateProfilesJobTest extends TestCase
         $response = $api->get("collection/$collection_id/subprofiles");
         $this->assertSame(0, count($response['data']));
         // Now, the real test:
-        $this->getJob()->processItem($item, $job_context);
+        $this->getJob('', [], $api)->processItem($item, $job_context);
         $profiles_response = $api->get("database/$database_id/profiles");
         $profiles_count = count($response['data']);
         $response = $api->get("collection/$collection_id/subprofiles");
@@ -1613,12 +1592,10 @@ class CopernicaUpdateProfilesJobTest extends TestCase
             ]
         ];
         $api = new TestApi($structure, null, true);
-        // This is how we keep this API 'environment' for CopernicaRestApi:
-        TestApiFactory::$testApis[self::TOKEN] = $api;
 
         // Call start() to initialize context, but don't fetch items.
         $job_context = ['drunkins_override_fetch' => ['anything']];
-        $items_not_fetched = $this->getJob('magento_import')->start($job_context);
+        $items_not_fetched = $this->getJob('magento_import', [], $api)->start($job_context);
 
         // Basic error check: If not all sub-items have key field values, the
         // valid sub-items still get inserted as subprofiles (and the main
@@ -1631,7 +1608,7 @@ class CopernicaUpdateProfilesJobTest extends TestCase
             self::COLLECTION2_ID => [['SKU' => 'prod-345', 'ItemId' => 3], ['SKU' => 'prod-346']]
         ];
         $GLOBALS['drunkins_log_test_threshold'] = WATCHDOG_WARNING;
-        $this->getJob()->processItem($item, $job_context);
+        $this->getJob('', [], $api)->processItem($item, $job_context);
         $database_id = self::DATABASE_ID;
         $collection_id = self::COLLECTION_ID;
         $collection2_id = self::COLLECTION2_ID;
@@ -1713,7 +1690,7 @@ class CopernicaUpdateProfilesJobTest extends TestCase
             self::COLLECTION_ID => ['ORDERId' => 1, 'Total' => 9.99, 'STAtus' => 'shipping'],
             self::COLLECTION2_ID => [['Sku' => 'prod-345', 'itemId' => 3]]
         ];
-        $this->getJob()->processItem($item, $job_context);
+        $this->getJob('', [], $api)->processItem($item, $job_context);
         $profile_queries = $this->jobUsesProfileCache('id') ? [] : [$profile_id];
         if ($this->jobUsesProfileCache('serial')) {
             // database/N/profiles is queried this one first time, to populate
@@ -1774,7 +1751,7 @@ class CopernicaUpdateProfilesJobTest extends TestCase
             self::COLLECTION_ID => ['OrderId' => 3, 'Total' => 9.99, 'STAtus' => 'shipping'],
             self::COLLECTION2_ID => [['Sku' => 'prod-346', 'itemId' => 3], ['Sku' => 'prod-345', 'itemId' => $item_id_testlater]]
         ];
-        $this->getJob()->processItem($item, $job_context);
+        $this->getJob('', [], $api)->processItem($item, $job_context);
         // From only checking the API log, we can derive that all subprofiles
         // were inserted to the existing profile. GET queries for subprofiles
         // - are done for new subprofiles if no 'key_field_serial' (because
@@ -1802,7 +1779,7 @@ class CopernicaUpdateProfilesJobTest extends TestCase
         $item = [
             'MagentoCustomerId' => 1, 'eMAil' => 'rm@wyz.biz', 'Name' => 'not-me',
         ];
-        $this->getJob()->processItem($item, $job_context);
+        $this->getJob('', [], $api)->processItem($item, $job_context);
         $this->assertSame([
             // The job queries for the profile twice: by ID and email.
             "GET database/$database_id/profiles",
@@ -1830,7 +1807,7 @@ class CopernicaUpdateProfilesJobTest extends TestCase
             self::COLLECTION_ID => ['OrderId' => 4, 'Status' => 'shipping'],
             self::COLLECTION2_ID => ['Sku' => 'prod-347', 'itemId' => 7]
         ];
-        $this->getJob('magento_import', $more_settings)->processItem($item, $job_context);
+        $this->getJob('magento_import', $more_settings, $api)->processItem($item, $job_context);
         $this->assertStringStartsWith(
             'Copernica returned 2 profiles for "rm@wyz.biz"; taking all of them (IDs 1, 2).',
             t($GLOBALS['drunkins_log_test_stack'][0][0], $GLOBALS['drunkins_log_test_stack'][0][1])
@@ -1849,7 +1826,7 @@ class CopernicaUpdateProfilesJobTest extends TestCase
             self::COLLECTION_ID => ['OrderId' => 4, 'STAtus' => 'SHIPPING'],
         ];
         $api->resetApiUpdateLog();
-        $this->getJob()->processItem($item, $job_context);
+        $this->getJob('', [], $api)->processItem($item, $job_context);
         $this->assertUpdateLog($q1_ifnocache, 0, $this->jobUsesProfileCache('id') ? false : [$profile_id, 2], [
             "PUT subprofile/5/fields",
             "PUT subprofile/6/fields",
@@ -1865,14 +1842,12 @@ class CopernicaUpdateProfilesJobTest extends TestCase
             self::COLLECTION_ID => ['OrderId' => 4, 'STAtus' => 'Shipping'],
         ];
         $api->resetApiUpdateLog();
-        $this->getJob('magento_import', $more_settings)->processItem($item, $job_context);
+        $this->getJob('magento_import', $more_settings, $api)->processItem($item, $job_context);
         // Only GETs of the subprofile + profiles.
         $this->assertUpdateLog($q1_ifnocache, 0, $this->jobUsesProfileCache('id') ? false : [$profile_id, 2], [], $api);
 
         // Import will completely break if we have an item that leads back to
-        // different profiles through their collections' keys. This throws an
-        // UnexpectedValueException, which is caught by processItem() and then
-        // by default causes an error log.
+        // different profiles through their collections' keys.
         $api->resetApiUpdateLog();
         $GLOBALS['drunkins_log_test_stack'] = [];
         $item = [
@@ -1880,13 +1855,10 @@ class CopernicaUpdateProfilesJobTest extends TestCase
             self::COLLECTION_ID => ['OrderId' => 4, 'Status' => 'shipping'],
             self::COLLECTION2_ID => ['Sku' => 'prod-347', 'itemId' => 3]
         ];
-        $this->getJob()->processItem($item, $job_context);
-        $this->assertStringStartsWith('processItem() aborted at', $GLOBALS['drunkins_log_test_stack'][0][0]);
-        $this->assertStringContainsString(
-            'differ from main profiles',
-            t($GLOBALS['drunkins_log_test_stack'][0][0], $GLOBALS['drunkins_log_test_stack'][0][1])
-        );
-        $this->assertSame([], $api->getApiUpdateLog(['POST', 'PUT', 'DELETE']));
+        $this->expectException(\UnexpectedValueException::class);
+        $this->expectExceptionMessage('differ from main profiles');
+        $this->getJob('', [], $api)->processItem($item, $job_context);
+        $this->assertSame([], $api->getApiUpdateLog());
 
         // More general tests for the job, not connected to the Magento import:
 
@@ -1917,7 +1889,7 @@ class CopernicaUpdateProfilesJobTest extends TestCase
             'MagentoCustomerId' => 23, 'email' => 'eh@example.com', 'name' => 'eh',
             self::COLLECTION2_ID => ['Sku' => 'prod-345', 'itemId' => $item_id_testlater]
         ];
-        $this->getJob('magento_import', $more_settings)->processItem($item, $job_context);
+        $this->getJob('magento_import', $more_settings, $api)->processItem($item, $job_context);
         // The job queries for the profile twice: by ID and email.
         $profile_queries = $this->jobUsesProfileCache('serial') ? [] : [0, 0];
         $this->assertUpdateLog(0, 0, $profile_queries, [
@@ -1947,7 +1919,7 @@ class CopernicaUpdateProfilesJobTest extends TestCase
             'MagentoCustomerId' => 23,
             self::COLLECTION2_ID => ['Sku' => 'prod-345', 'itemId' => $item_id_testlater]
         ];
-        $this->getJob()->processItem($item, $job_context);
+        $this->getJob('', [], $api)->processItem($item, $job_context);
         $this->assertUpdateLog(0, 1, $this->jobUsesProfileCache('id') ? false : [$profile_id, 3], [
             "PUT profile/1/fields",
         ], $api);
@@ -2116,14 +2088,12 @@ class CopernicaUpdateProfilesJobTest extends TestCase
     /**
      * Returns an instance of the job class.
      *
-     * This helper method is getting to be a bit overloaded; it nowaways
+     * This helper method is getting to be a bit overloaded; it nowadays
      * - can keep cached jobs
      * - can get a job with specified (extra) settings, which are not cached
      * - uses jobUsesProfileCache() to determine whether jobs use profile
      *   caches. This means that cache settings must not be set in the standard
      *   configurations.
-     * - (if the job does use a cache) is dependent on a TestApi instance
-     *   already being initialized and known by the TestApiFactory.
      *
      * @param string|false $job_type
      *   (Optional) The 'job type', which is used as an ID for selecting a standard
@@ -2132,10 +2102,12 @@ class CopernicaUpdateProfilesJobTest extends TestCase
      * @param array $more_settings
      *   Extra settings to pass to the job. If an empty array, the job instance
      *   gets cached.
+     * @param \CopernicaApi\Tests\TestApi $api
+     *   Api class. Sometimes used.
      *
      * @return \CopernicaUpdateProfilesJob|null
      */
-    protected function getJob($type = '', $more_settings = [])
+    protected function getJob($type = '', $more_settings = [], $api = null)
     {
         static $instance;
         static $current_job_type;
@@ -2242,11 +2214,11 @@ class CopernicaUpdateProfilesJobTest extends TestCase
                 // necessary. (drunkins_get_job() always adds it.)
                 'job_id' => 'copernica_update_test',
                 'dependencies' => [
-                    'copernica_client' => new CopernicaRestClient(self::TOKEN, '\CopernicaApi\Tests\TestApiFactory')
+                    'copernica_client' => new TestRestClient($api)
                 ],
                 // The class doesn't use this (because CopernicaRestClient is
                 // already instantiated) but still checks its presence.
-                'copernica_token' => self::TOKEN,
+                'copernica_token' => 'testtoken',
                 'cache_profiles_by_key' => $this->jobUsesProfileCache('key'),
             ];
             if (isset($more_settings['copernica_field_settings'])) {
@@ -2275,7 +2247,7 @@ class CopernicaUpdateProfilesJobTest extends TestCase
                 // now we're likely just depending on the constructor ignoring
                 // any errors caused by recreating the table.
                 $settings['dependencies']['profile_cache_manager'] = new SqliteKeyValueStoreManager(
-                    TestApiFactory::$testApis[self::TOKEN]->getPdoConnection(),
+                    $api->getPdoConnection(),
                     $new_process
                 );
             }

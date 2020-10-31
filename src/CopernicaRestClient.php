@@ -237,14 +237,11 @@ class CopernicaRestClient
     protected $suppressApiCallErrors = self::NONE;
 
     /**
-     * Name of a factory class that instantiates the actual connection class.
+     * An instantiated CopernicaRestApi class.
      *
-     * The class must have a static create() method as implicitly documented in
-     * getApiConnection().
-     *
-     * @var string
+     * @var object
      */
-    private $apiFactoryClassName;
+    private $api;
 
     /**
      * The access token.
@@ -286,17 +283,13 @@ class CopernicaRestClient
      *
      * @param string $token
      *   The access token used by the wrapped class.
-     * @param string $api_factory
-     *   The full class name responsible for instantiating classes that handle
-     *   the actual REST API connection. When in doubt, do not pass / pass "".
      * @param int $version
      *   The API version to call.
      */
-    public function __construct($token, $api_factory = '', $version = 2)
+    public function __construct($token, $version = 2)
     {
         $this->token = $token;
         $this->version = $version;
-        $this->apiFactoryClassName = $api_factory;
     }
 
     /**
@@ -395,7 +388,7 @@ class CopernicaRestClient
             $suppress_errors = $this->suppressApiCallErrors;
         }
 
-        $api = $this->getApiConnection();
+        $api = $this->getApi();
         // Make the API class throw exceptions. We can extract the headers/body
         // from the exception message if needed.
         $api->throwOnError = true;
@@ -460,7 +453,7 @@ class CopernicaRestClient
             $suppress_errors = $this->suppressApiCallErrors;
         }
 
-        $api = $this->getApiConnection();
+        $api = $this->getApi();
         // Make the API class throw exceptions. We can extract the headers/body
         // from the exception message if needed.
         $api->throwOnError = true;
@@ -538,7 +531,7 @@ class CopernicaRestClient
             $suppress_errors = $this->suppressApiCallErrors;
         }
 
-        $api = $this->getApiConnection();
+        $api = $this->getApi();
         // Make the API class throw exceptions. We can extract the headers/body
         // from the exception message if needed.
         $api->throwOnError = true;
@@ -601,7 +594,7 @@ class CopernicaRestClient
             $suppress_errors = $this->suppressApiCallErrors;
         }
 
-        $api = $this->getApiConnection();
+        $api = $this->getApi();
         // Make the API class throw exceptions. We can extract the body from
         // the exception message if needed; the headers are not included but
         // we don't know of an application that needs it.
@@ -826,90 +819,29 @@ class CopernicaRestClient
     }
 
     /**
-     * Returns state that must be kept for the next getEntitiesNextBatch() call.
-     *
-     * If for whatever reason getEntitiesNextBatch() needs to work on a newly
-     * constructed class, feed the return value from this method into that new
-     * class through restoreState().
-     *
-     * @return array
-     *   The state array.
-     */
-    public function backupState()
-    {
-        return [
-            'last_resource' => $this->lastEntitiesResource,
-            'last_parameters' => $this->lastEntitiesParameters,
-            'next_start' => $this->nextEntitiesDatasetStart,
-            'token' => $this->token,
-            'version' => $this->version,
-            'factory_class' => $this->apiFactoryClassName,
-            'suppress_errors' => $this->getSuppressedApiCallErrors(),
-        ];
-    }
-
-    /**
-     * Restores old state.
-     *
-     * @param array $state
-     *   State, probably previously returned by backupState(). Token/version
-     *   values are optional; if set, they overwrite the arguments passed into
-     *   the constructor.
-     *
-     * @throws \LogicException
-     *   If state has invalid values..
-     */
-    public function restoreState(array $state)
-    {
-        if (
-            isset($state['token']) && !is_string($state['token'])
-            || isset($state['version']) && filter_var($state['version'], FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]) === false
-            || isset($state['factory_class']) && !is_string($state['factory_class'])
-            || !isset($state['suppress_errors'])
-            || !is_int($state['suppress_errors'])
-            || !isset($state['last_resource'])
-            || !is_string($state['last_resource'])
-            || !isset($state['last_parameters'])
-            || !is_array($state['last_parameters'])
-            || !isset($state['last_total'])
-            || !isset($state['next_start'])
-            || !is_int($state['last_total'])
-            || !is_int($state['next_start'])
-        ) {
-            // Not spending time on detailed errors. (Yet?)
-            throw new LogicException('Invalid structure for state.');
-        }
-        $this->suppressApiCallErrors($state['suppress_errors']);
-        $this->lastEntitiesResource = $state['last_resource'];
-        $this->lastEntitiesParameters = $state['last_parameters'];
-        $this->nextEntitiesDatasetStart = $state['next_start'];
-        if (isset($state['factory_class'])) {
-            $this->apiFactoryClassName = $state['factory_class'];
-        }
-        if (isset($state['token'])) {
-            $this->token = $state['token'];
-        }
-        if (isset($state['version'])) {
-            $this->version = $state['version'];
-        }
-    }
-
-    /**
-     * Returns an 'api connection' instance.
+     * Returns the 'api connection' instance.
      *
      * @return \CopernicaApi\CopernicaRestAPI|object
      */
-    private function getApiConnection()
+    private function getApi()
     {
-        if ($this->apiFactoryClassName) {
-            // We're using the factory pattern because we need to be able
-            // to instantiate the actual 'api connection' class outside of
-            // the constructor, to e.g. make restoreState() work.
-            $api = call_user_func([$this->apiFactoryClassName, 'create'], $this->token, $this->version);
-        } else {
-            $api = new CopernicaRestAPI($this->token, $this->version);
+        if (!isset($this->api)) {
+            $this->setApi();
         }
-        return $api;
+        return $this->api;
+    }
+
+    /**
+     * Sets an 'api connection' instance.
+     *
+     * This is for test classes to override - but we're making it a bit
+     * tedious because we're keeping this a protected method.
+     *
+     * @param \CopernicaApi\CopernicaRestAPI|object $api
+     */
+    protected function setApi($api = null)
+    {
+        $this->api = isset($api) ? $api : new CopernicaRestAPI($this->token, $this->version);
     }
 
     /**

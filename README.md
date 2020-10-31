@@ -161,9 +161,7 @@ API client class).
   tests which use this test API.
 
 The 'test API' should enable writing tests for your own processes which use
-CopernicaRestClient. See CopernicaRestClient::getClient() for an example on
-how to instantiate a CopernicaRestClient which uses the test API. (Simplify at
-will; the relevant code is about how to use TestApiFactory.)
+CopernicaRestClient. (See TestRestClient.)
 
 The extra/ directory may contain example tests/other code I wrote for my own
 processes.

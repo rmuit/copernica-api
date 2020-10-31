@@ -14,9 +14,6 @@ use PHPUnit\Framework\TestCase;
  * - Simulate errors in getEntities() to check checkEntitiesMetadata logic.
  *   (By implementing _simulate_strange_response for incomplete entities data)
  * - test 'paging' in getEntities/nextBatch/lastDatasetIsComplete().
- * - test backupState() and restoreState() to a new CopernicaRestClient,
- *   probably right before calling getEntitiesnextBatch() on the new instance.
- *   (We're already testing that they work for a few other properties.)
  * - test getEmbeddedEntities() on the result of a '/databases' call, after we
  *   implement a response for that in TestApi.
  * (I already know the above works, because of running most of it in
@@ -295,24 +292,13 @@ class CopernicaRestClientTest extends TestCase
      */
     protected function getClient($suppress_exceptions_default = null, $hack_api_for_invalid_token = false)
     {
-        $token = 'testtoken';
         $api = new TestApi();
-        TestApiFactory::$testApis[$token] = $api;
-        $client = new CopernicaRestClient($token, '\CopernicaApi\Tests\TestApiFactory');
+        $client = new TestRestClient($api);
 
         if (isset($suppress_exceptions_default)) {
             $client->suppressApiCallErrors($suppress_exceptions_default);
         }
         $api->invalidToken = $hack_api_for_invalid_token;
-
-        // Randomly instantiate a new client and try to restore state into it,
-        // to prove that works / the CopernicaRestClient itself doesn't hold
-        // needed state by accident.
-        if (rand(0, 1)) {
-            $client2 = new CopernicaRestClient('');
-            $client2->restoreState($client->backupState());
-            $client = $client2;
-        }
 
         return $client;
     }

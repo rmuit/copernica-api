@@ -19,14 +19,6 @@ use UnexpectedValueException;
  * CopernicaRestAPI, to test said code. It stores/updates/retrieves data in its
  * own storage, rather than doing API calls.
  *
- * There's a caveat: the constructor is different and the token/version
- * arguments are not used. This is solved by using a factory class
- * (TestApiFactory) which is usable by at least CopernicaRestClient. (Which is
- * the basic building block that's is using CopernicaRestAPI / can be tested
- * through this TestApi class. It is expected that most other code that uses
- * the Copernica REST API and needs tests, uses CopernicaRestClient and
- * TestApiFactory rather than using CopernicaRestAPI directly.)
- *
  * Besides 'being a CopernicaRestAPI', this class may contain some extra public
  * methods usable by tests.
  *
