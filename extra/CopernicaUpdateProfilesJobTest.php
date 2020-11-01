@@ -26,7 +26,8 @@
  *   making 'their' synchronization available for free.
  */
 
-use CopernicaApi\RestClient;
+use CopernicaApi\CopernicaRestAPI;
+use CopernicaApi\Helper;
 use CopernicaApi\Tests\TestApi;
 use CopernicaApi\Tests\TestRestClient;
 use PHPUnit\Framework\TestCase;
@@ -169,6 +170,8 @@ class CopernicaUpdateProfilesJobTest extends TestCase
      *   True: get field names only (without prefixes). Other value besides
      *   0/FALSE: return settings where the field names are supposedly part of
      *   a collection.
+     *
+     * @return array
      */
     private function getFieldSettings($get_field_names_to_test = false)
     {
@@ -536,7 +539,7 @@ class CopernicaUpdateProfilesJobTest extends TestCase
         ];
         $merge = [
             'newkey' => 'new',
-            'Dupe' => 'new',
+            'DUPE' => 'new',
             'Dupe' => 3,
             'key' => 'new',
             'KEY' => 'newtoo',
@@ -763,7 +766,7 @@ class CopernicaUpdateProfilesJobTest extends TestCase
     /**
      * Returns job that makes some protected methods callable.
      *
-     * @return \CopernicaUpdateProfilesJob
+     * @return CopernicaUpdateProfilesJob
      *   Class with some protected methods made public.
      */
     protected function getJobWithAccessibleMethods($settings)
@@ -1855,7 +1858,7 @@ class CopernicaUpdateProfilesJobTest extends TestCase
             self::COLLECTION_ID => ['OrderId' => 4, 'Status' => 'shipping'],
             self::COLLECTION2_ID => ['Sku' => 'prod-347', 'itemId' => 3]
         ];
-        $this->expectException(\UnexpectedValueException::class);
+        $this->expectException(UnexpectedValueException::class);
         $this->expectExceptionMessage('differ from main profiles');
         $this->getJob('', [], $api)->processItem($item, $job_context);
         $this->assertSame([], $api->getApiUpdateLog());
@@ -1989,7 +1992,7 @@ class CopernicaUpdateProfilesJobTest extends TestCase
     /**
      * Asserts that a string date value is in a certain format / date range.
      *
-     * @param \CopernicaApi\CopernicaRestAPI|\CopernicaApi\Tests\TestApi $api
+     * @param CopernicaRestAPI|TestApi $api
      *   An API instance, for getting the date format.
      * @param array $entity
      *   The entity (profile, subprofile, or likely other)
@@ -2022,10 +2025,10 @@ class CopernicaUpdateProfilesJobTest extends TestCase
      * This may be overkill because we're not sure anymore about the sense of
      * having a configurable timezone for TestApi. Whatever.
      *
-     * @param \CopernicaApi\CopernicaRestAPI|\CopernicaApi\Tests\TestApi $api
+     * @param CopernicaRestAPI|TestApi $api
      *   An API instance.
      *
-     * @return \DateTime
+     * @return DateTime
      *   Datetime object; time set to 'now'.
      */
     private function getApiDateTimeObject($api)
@@ -2062,7 +2065,7 @@ class CopernicaUpdateProfilesJobTest extends TestCase
      */
     protected function resetCaches($api, $database_id, $reset_caches = true)
     {
-        /** @var \CopernicaApi\Tests\TestApi $api */
+        /** @var TestApi $api */
         $response = $api->get("database/$database_id/profiles");
         foreach ($response['data'] as $profile) {
             $api->delete("profile/{$profile['ID']}");
@@ -2095,17 +2098,17 @@ class CopernicaUpdateProfilesJobTest extends TestCase
      *   caches. This means that cache settings must not be set in the standard
      *   configurations.
      *
-     * @param string|false $job_type
+     * @param string|false $type
      *   (Optional) The 'job type', which is used as an ID for selecting a standard
      *   settings configuration. If '', gets the same type as previously. If
      *   FALSE, the cache gets reset and nothing gets returned.
      * @param array $more_settings
      *   Extra settings to pass to the job. If an empty array, the job instance
      *   gets cached.
-     * @param \CopernicaApi\Tests\TestApi $api
+     * @param TestApi $api
      *   Api class. Sometimes used.
      *
-     * @return \CopernicaUpdateProfilesJob|null
+     * @return CopernicaUpdateProfilesJob|null
      */
     protected function getJob($type = '', $more_settings = [], $api = null)
     {
@@ -2191,7 +2194,7 @@ class CopernicaUpdateProfilesJobTest extends TestCase
                     // Resetting curent type is necessary so we'll get to
                     // setting $new_process = true next time.
                     $current_job_type = '';
-                    return;
+                    return null;
                 }
                 $current_job_type = $type;
                 $new_process = true;
@@ -2296,7 +2299,7 @@ class CopernicaUpdateProfilesJobTest extends TestCase
      * This assumes that whatever key-value store manager was used for creating
      * the key-value store, has done this inside the API's PDO connection.
      *
-     * @param \CopernicaApi\Tests\TestApi $api
+     * @param TestApi $api
      *   The API containing the PDO connection.
      * @param string|int $collection_id
      *   The ID of the collection containing the subprofiles; used as a
@@ -2304,7 +2307,7 @@ class CopernicaUpdateProfilesJobTest extends TestCase
      *   to query/store main profiles by their 'key field' value and '-' to
      *   query/store main profiles by their ID.
      *
-     * @return \PdoKeyValueStore
+     * @return PdoKeyValueStore
      */
     protected function getProfileCache($api, $collection_id = 0)
     {

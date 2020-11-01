@@ -24,7 +24,7 @@ class PdoKeyValueStore
     /**
      * The database connection.
      *
-     * @var \PDO
+     * @var PDO
      */
     protected $pdoConnection;
 
@@ -66,7 +66,7 @@ class PdoKeyValueStore
     /**
      * Constructor.
      *
-     * @param \PDO $pdo_connection
+     * @param PDO $pdo_connection
      *   The PDO connection containing the table used to fetch/store data.
      * @param string $table
      *   Table name.
@@ -234,7 +234,7 @@ class PdoKeyValueStore
      * @param array $parameters
      *   Query parameters as could be used in PDOStatement::execute.
      *
-     * @return \PDOStatement
+     * @return PDOStatement
      *   Executed PDO statement.
      */
     protected function dbExecutePdoStatement($query, $parameters)
@@ -333,7 +333,7 @@ class PdoKeyValueStore
      *   indexed; the difference with not passing the argument is that the
      *   return value is guaranteed to be an array (so it's countable, etc).
      *
-     * @return array|\Traversable
+     * @return array|Traversable
      *   An array of database rows (as arrays), or an equivalent traversable.
      */
     public function dbFetchAll($query, $parameters = [], $key = null)

@@ -2,6 +2,7 @@
 
 namespace CopernicaApi\Tests;
 
+use CopernicaApi\CopernicaRestAPI;
 use DateTime;
 use DateTimeZone;
 use LogicException;
@@ -468,7 +469,7 @@ class TestApiBaseTest extends TestCase
      * We can get away with executing most (all?) put() calls twice, so we'll
      * do this to make sure they behave well for both throwOnError states.
      *
-     * @param \CopernicaApi\CopernicaRestAPI|\CopernicaApi\Tests\TestApi $api
+     * @param CopernicaRestAPI|TestApi $api
      *   An API instance.
      * @param string $resource
      *   Resource (URI relative to the versioned API) to send data to.
@@ -486,7 +487,7 @@ class TestApiBaseTest extends TestCase
      *   The relative path in the 'Location:' header returned in the header
      *   (through the exception message).
      */
-    private function executePut(TestApi $api, $resource, $data, array $parameters = array(), $execute_twice = true)
+    private function executePut(TestApi $api, $resource, $data, array $parameters = [], $execute_twice = true)
     {
         $old_throw_state = $api->throwOnError;
 
@@ -600,7 +601,7 @@ class TestApiBaseTest extends TestCase
     /**
      * Gets date formatted as the API would.
      *
-     * @param \CopernicaApi\Tests\TestApi $api
+     * @param TestApi $api
      *   An API instance
      * @param int $timestamp
      *   Timestamp.

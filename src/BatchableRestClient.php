@@ -177,7 +177,7 @@ class BatchableRestClient extends RestClient
      * @return array[]
      *   A batch of (zero or more) entities
      *
-     * @throws \RuntimeException
+     * @throws RuntimeException
      *   If the result metadata are not successfully verified.
      */
     public function getEntities($resource, array $parameters = [], $reset_fetched_count = true)
@@ -626,7 +626,7 @@ class BatchableRestClient extends RestClient
      *   State, probably previously returned by getState(). Token is optional;
      *   if set, it overwrites the token that was passed into the constructor.
      *
-     * @throws \LogicException
+     * @throws LogicException
      *   If state has invalid values.
      */
     public function setState(array $state)
@@ -694,7 +694,7 @@ class BatchableRestClient extends RestClient
      *     last value from the previous batch, if it's not the general "fields"
      *     parameter.
      *
-     * @throws \RuntimeException
+     * @throws RuntimeException
      *   No default 'orderby' and related properties are defined for this API
      *   endpoint and none are specified in the last call parameters.
      */
@@ -763,7 +763,7 @@ class BatchableRestClient extends RestClient
      * @return mixed
      *   The property value.
      *
-     * @throws \RuntimeException
+     * @throws RuntimeException
      *   The property is not found.
      */
     protected function getEntityValue(array $entity, $field_name)

@@ -3,7 +3,7 @@
 namespace CopernicaApi\Tests;
 
 use CopernicaApi\RestClient;
-use PDO;
+use LogicException;
 use PHPUnit\Framework\TestCase;
 
 /**
@@ -194,7 +194,7 @@ class RestClientTest extends TestCase
                     break;
 
                 default:
-                    throw new \LogicException("Test logic is wrong, no test available for $class_method method.");
+                    throw new LogicException("Test logic is wrong, no test available for $class_method method.");
             }
             $this->assertEquals($expected_value, $result);
         };
@@ -285,7 +285,7 @@ class RestClientTest extends TestCase
      * @param bool $hack_api_for_invalid_token
      *   (Optional) hack TestApi class to return "invalid token" errors.
      *
-     * @return \CopernicaApi\RestClient
+     * @return RestClient
      */
     protected function getClient($suppress_exceptions_default = null, $hack_api_for_invalid_token = false)
     {

@@ -26,7 +26,7 @@ class SqliteKeyValueStoreManager
     /**
      * The database connection.
      *
-     * @var \PDO
+     * @var PDO
      */
     protected $pdoConnection;
 
@@ -37,9 +37,9 @@ class SqliteKeyValueStoreManager
      * uses this class must check it on upgrades; that's what you get for using
      * namespace-less code in a directory called extra/.)
      *
-     * @param \PDO $pdo_connection
+     * @param PDO $pdo_connection
      *   PDO connection.
-     * @parem bool $create_backend
+     * @param bool $create_backend
      *   (Optional) Pass False to not create the table, meaning you're certain
      *   it exists already.
      *
@@ -65,7 +65,7 @@ class SqliteKeyValueStoreManager
     /**
      * Gets the database connection.
      *
-     * @return \PDO
+     * @return PDO
      */
     public function getPdoConnection()
     {
@@ -78,7 +78,7 @@ class SqliteKeyValueStoreManager
      * @param string $collection
      *   The name of the collection holding key and value pairs.
      *
-     * @return \PdoKeyValueStore
+     * @return PdoKeyValueStore
      *   A key/value store implementation for the given $collection.
      */
     public function get($collection)

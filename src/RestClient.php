@@ -2,7 +2,6 @@
 
 namespace CopernicaApi;
 
-use LogicException;
 use RuntimeException;
 
 /**
@@ -350,13 +349,13 @@ class RestClient
      *   'normal' return value), or false if an suppressed exception has an
      *   unrecognized message (which we hope is impossible).
      *
-     * @throws \RuntimeException
+     * @throws RuntimeException
      *   If any non-supressed Curl error, nonstandard HTTP response code or
      *   unexpected response headers are encountered.
      *
      * @see RestClient::suppressApiCallErrors()
      */
-    public function post($resource, array $data = array(), $suppress_errors = null)
+    public function post($resource, array $data = [], $suppress_errors = null)
     {
         // API NOTE: One error we've seen when POSTing data to one Copernica
         // db (but not another one) was that addresses@126.com were disallowed.
@@ -420,13 +419,13 @@ class RestClient
      *   return value)... or false if an suppressed exception has an
      *   unrecognized message (which we hope is impossible).
      *
-     * @throws \RuntimeException
+     * @throws RuntimeException
      *   If any non-suppressed Curl error, nonstandard HTTP response code or
      *   unexpected response headers are encountered.
      *
      * @see RestClient::suppressApiCallErrors()
      */
-    public function put($resource, array $data, array $parameters = array(), $suppress_errors = null)
+    public function put($resource, array $data, array $parameters = [], $suppress_errors = null)
     {
         if (!isset($suppress_errors)) {
             $suppress_errors = $this->suppressApiCallErrors;
@@ -498,7 +497,7 @@ class RestClient
      *   body, or false if an suppressed exception has an unrecognized message
      *   (which we hope is impossible).
      *
-     * @throws \RuntimeException
+     * @throws RuntimeException
      *   If any non-supressed Curl error, nonstandard HTTP response code or
      *   unexpected response headers are encountered.
      *
@@ -560,7 +559,7 @@ class RestClient
      * @see RestClient::getEntity()
      * @see RestClient::getEntities()
      */
-    public function get($resource, array $parameters = array(), $suppress_errors = null)
+    public function get($resource, array $parameters = [], $suppress_errors = null)
     {
         // API NOTES: (strange location, may need to move to README)
         // - Curl occasionally returns error 7 "Failed to connect" (and
@@ -666,13 +665,13 @@ class RestClient
      * @return array
      *   The JSON-decoded response body containing an entity.
      *
-     * @throws \RuntimeException
+     * @throws RuntimeException
      *   If the get() call threw a RuntimeException, if the entity was removed
      *   (code 112), if the entity structure is invalid or if the returned
      *   response includes an 'error' value. See checkResultForError() for
      *   error codes.
      */
-    public function getEntity($resource, array $parameters = array(), $suppress_errors = null)
+    public function getEntity($resource, array $parameters = [], $suppress_errors = null)
     {
         $result = $this->get($resource, $parameters, self::NONE);
         // Some of the calls (like publisher/documents) have 'id' property;
@@ -713,10 +712,10 @@ class RestClient
      *   The 'data' part of the JSON-decoded response body, i.e. an array of
      *   (zero or more) entities.
      *
-     * @throws \RuntimeException
+     * @throws RuntimeException
      *   If the result metadata are not successfully verified.
      */
-    public function getEntities($resource, array $parameters = array())
+    public function getEntities($resource, array $parameters = [])
     {
         // We can expect that setting 'total' = false is easier on the API
         // back end, though we're not sure how much. (From some casual
@@ -747,7 +746,7 @@ class RestClient
     /**
      * Returns the 'api connection' instance.
      *
-     * @return \CopernicaApi\CopernicaRestAPI|object
+     * @return CopernicaRestAPI|object
      */
     private function getApi()
     {
@@ -763,7 +762,7 @@ class RestClient
      * This is for test classes to override - but we're making it a bit
      * tedious because we're keeping this a protected method.
      *
-     * @param \CopernicaApi\CopernicaRestAPI|object $api
+     * @param CopernicaRestAPI|object $api
      */
     protected function setApi($api = null)
     {
@@ -776,7 +775,7 @@ class RestClient
      * Just some code abstracted so we don't need to duplicate it. This is only
      * meant to handle specific circumstances; see the code comments.
      *
-     * @param \RuntimeException $exception
+     * @param RuntimeException $exception
      *   An exception that was thrown.
      * @param bool $suppress
      *   If True, return something from this method (and throw away the
@@ -822,7 +821,7 @@ class RestClient
      * Separated out only to keep put() code a bit small. This logic is
      * specific to one situation.
      *
-     * @param \RuntimeException $exception
+     * @param RuntimeException $exception
      *   The exception, which is assumed to be of code 303 and contain full
      *   headers + body whose contents can/should be checked strictly.
      *
@@ -887,7 +886,7 @@ class RestClient
      * This helper function is only needed because we don't have access to the
      * Curl handle anymore.
      *
-     * @param \RuntimeException $exception
+     * @param RuntimeException $exception
      *   The response with headers and body concatenated, which we get from
      *   some Curl calls.*
      * @param bool $json_decode_body
@@ -933,7 +932,7 @@ class RestClient
      */
     private function parseHeaders($raw_headers)
     {
-        $headers = array();
+        $headers = [];
         $previous_header = '';
 
         foreach (explode("\n", $raw_headers) as $header) {
@@ -945,9 +944,9 @@ class RestClient
                 if (!isset($headers[$name])) {
                     $headers[$name] = $value;
                 } elseif (is_array($headers[$name])) {
-                    $headers[$name] = array_merge($headers[$name], array($value));
+                    $headers[$name] = array_merge($headers[$name], [$value]);
                 } else {
-                    $headers[$name] = array_merge(array($headers[$name]), array($value));
+                    $headers[$name] = array_merge([$headers[$name]], [$value]);
                 }
 
                 $previous_header = $name;
@@ -982,7 +981,7 @@ class RestClient
      * @param string $struct_descn
      *   Description of the structure, for exception messages.
      *
-     * @throws \RuntimeException
+     * @throws RuntimeException
      *   If the result metadata are not successfully verified.
      *
      * @todo there's one thing we're not checking: whether the top level
@@ -1036,6 +1035,12 @@ class RestClient
      * This has only been tested for values of the 'total' parameter so far, so
      * it stays private until we have more use / more evidence of this
      * conversion being uniformly applicable.
+     *
+     * @param mixed $value
+     *   A value
+     *
+     * @return bool
+     *   Indicates whether a value converts to True.
      */
     private function isBooleanTrue($value)
     {
@@ -1058,7 +1063,7 @@ class RestClient
     /**
      * Checks if an exception contains an "already removed" message.
      *
-     * @param \RuntimeException $exception
+     * @param RuntimeException $exception
      *   The exception.
      *
      * @return bool
@@ -1094,7 +1099,7 @@ class RestClient
      *   The error code that should be used for the exception if this method
      *   does not decide it has a dedicated code for this error.
      *
-     * @throws \RuntimeException
+     * @throws RuntimeException
      *   If an 'error' value is found.
      */
     private function checkResultForError(array $result, $code)

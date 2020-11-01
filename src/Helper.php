@@ -198,6 +198,12 @@ class Helper
      * boolean field. It's used for 'boolean' query parameters and has only
      * been tested for values of the 'total' parameter so far, so it stays
      * private until it needs to be used more widely.
+     *
+     * @param mixed $value
+     *   A value
+     *
+     * @return bool
+     *   Indicates whether a value converts to True.
      */
     private static function isBooleanTrue($value)
     {
@@ -294,7 +300,7 @@ class Helper
      * @return array
      *   The embedded entities.
      *
-     * @throws \RuntimeException
+     * @throws RuntimeException
      *   If the property does not have the expected structure.
      *
      */
@@ -399,7 +405,7 @@ class Helper
      * @param string $struct_descn
      *   Description of the structure, for exception messages.
      *
-     * @throws \RuntimeException
+     * @throws RuntimeException
      *   If the result metadata are not successfully verified.
      *
      */

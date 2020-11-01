@@ -2,6 +2,7 @@
 
 namespace CopernicaApi\Tests;
 
+use CopernicaApi\CopernicaRestAPI;
 use CopernicaApi\Helper;
 use DateTime;
 use DateTimeZone;
@@ -986,7 +987,7 @@ class ApiBehaviorTest extends TestCase
     /**
      * Asserts that a string date value is in a certain format / date range.
      *
-     * @param \CopernicaApi\CopernicaRestAPI|\CopernicaApi\Tests\TestApi $api
+     * @param CopernicaRestAPI|TestApi $api
      *   An API instance, for getting the date format.
      * @param array $entity
      *   The entity (profile, subprofile, or likely other)
@@ -1016,7 +1017,7 @@ class ApiBehaviorTest extends TestCase
     /**
      * Executes delete() that is supposed to fail; checks error.
      *
-     * @param \CopernicaApi\CopernicaRestAPI|\CopernicaApi\Tests\TestApi $api
+     * @param CopernicaRestAPI|TestApi $api
      *   An API instance.
      * @param $resource
      *   Resource (URI relative to the versioned API) to send data to.
@@ -1047,7 +1048,7 @@ class ApiBehaviorTest extends TestCase
      * We can get away with executing most (all?) put() calls twice, so we'll
      * do this to make sure they behave well for both throwOnError states.
      *
-     * @param \CopernicaApi\CopernicaRestAPI|\CopernicaApi\Tests\TestApi $api
+     * @param CopernicaRestAPI|TestApi $api
      *   An API instance.
      * @param string $resource
      *   Resource (URI relative to the versioned API) to send data to.
@@ -1065,7 +1066,7 @@ class ApiBehaviorTest extends TestCase
      *   The relative path in the 'Location:' header returned in the fake
      *   header (part of the exception message).
      */
-    private function executePut($api, $resource, $data, array $parameters = array(), $execute_twice = true)
+    private function executePut($api, $resource, $data, array $parameters = [], $execute_twice = true)
     {
         // While we're here anyway: just randomly add parameters to test that
         // they're all ignored.
@@ -1121,7 +1122,7 @@ class ApiBehaviorTest extends TestCase
     /**
      * Extracts API response / body from an exception message.
      *
-     * @param \RuntimeException $exception
+     * @param RuntimeException $exception
      *   The response with headers and body concatenated, which we get from
      *   some Curl calls.*
      * @param bool $extract_message_body
@@ -1154,10 +1155,10 @@ class ApiBehaviorTest extends TestCase
     /**
      * Gets DateTime object with correct timezone for the API.
      *
-     * @param \CopernicaApi\CopernicaRestAPI|\CopernicaApi\Tests\TestApi $api
+     * @param CopernicaRestAPI|TestApi $api
      *   An API instance.
      *
-     * @return \DateTime
+     * @return DateTime
      *   Datetime object; time set to 'now'.
      */
     private function getApiDateTimeObject($api)

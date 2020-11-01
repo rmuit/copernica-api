@@ -8,7 +8,9 @@ use DateTimeZone;
 use InvalidArgumentException;
 use PDO;
 use LogicException;
+use PDOStatement;
 use RuntimeException;
+use Traversable;
 use UnexpectedValueException;
 
 /**
@@ -122,7 +124,7 @@ class TestApi
     /**
      * Test database connection.
      *
-     * @var \PDO
+     * @var PDO
      */
     protected $pdoConnection;
 
@@ -184,7 +186,7 @@ class TestApi
      *   See normalizeDatabasesStructure() for format. Note "databases" refers
      *   to the copernica entities that hold profiles etc, not to our SQL
      *   database backend.
-     * @param \PDO $pdo_connection
+     * @param PDO $pdo_connection
      *   (Optional) PDO connection; if not null, the contents of the database
      *   are assumed to match the structure already (to a point that tests do
      *   not fail inexplicably), so no tables are created at construction time.
@@ -239,12 +241,12 @@ class TestApi
      *   should only happen if $this->throwOnError is false; those could
      *   represent a non-decoded response, or just false in extreme cases.
      *
-     * @throws \LogicException
+     * @throws LogicException
      *   If this class does not know how to handle input.
-     * @throws \RuntimeException
+     * @throws RuntimeException
      *   If 'API failure' was encounterd and $this->throwOnError is true.
      */
-    public function get($resource, array $parameters = array())
+    public function get($resource, array $parameters = [])
     {
         // No update log; we don't care that much (yet) how often we call GET.
         $parts = $this->initRestCall('GET', $resource);
@@ -357,12 +359,12 @@ class TestApi
      *   'no-op' path which might also have returned an error.) False is only
      *   returned if $this->throwOnError is false.
      *
-     * @throws \LogicException
+     * @throws LogicException
      *   If this class does not know how to handle input.
-     * @throws \RuntimeException
+     * @throws RuntimeException
      *   If 'API failure' was encountered and $this->throwOnError is true.
      */
-    public function post($resource, array $data = array())
+    public function post($resource, array $data = [])
     {
         $parts = $this->initRestCall('POST', $resource);
         if ($parts === false) {
@@ -538,12 +540,12 @@ class TestApi
      *   any PUT call returning an ID yet. False is only returned if
      *   $this->throwOnError is false.)
      *
-     * @throws \LogicException
+     * @throws LogicException
      *   If this class does not know how to handle input.
-     * @throws \RuntimeException
+     * @throws RuntimeException
      *   If 'API failure' was encounterd and $this->throwOnError is true.
      */
-    public function put($resource, $data, array $parameters = array())
+    public function put($resource, $data, array $parameters = [])
     {
         $parts = $this->initRestCall('PUT', $resource);
         if ($parts === false) {
@@ -688,12 +690,12 @@ class TestApi
      *   ID of created entity, or simply true/false to indicate success/failure.
      *   Failure only if $this->throwOnError is false.
      *
-     * @throws \LogicException
+     * @throws LogicException
      *   If this class does not know how to handle input.
-     * @throws \RuntimeException
+     * @throws RuntimeException
      *   If 'API failure' was encounterd and $this->throwOnError is true.
      */
-    public function sendData($resource, array $data = array(), array $parameters = array(), $method = "POST")
+    public function sendData($resource, array $data = [], array $parameters = [], $method = "POST")
     {
         // This is literally the condition used by CopernicaRestAPI.
         if ($method == "POST") {
@@ -717,9 +719,9 @@ class TestApi
      *   Both on success and on failure if $this->throwOnError is false (for
      *   compatibility with CopernicaRestAPI).
      *
-     * @throws \LogicException
+     * @throws LogicException
      *   If this class does not know how to handle input.
-     * @throws \RuntimeException
+     * @throws RuntimeException
      *   If 'API failure' was encounterd and $this->throwOnError is true.
      */
     public function delete($resource)
@@ -787,7 +789,7 @@ class TestApi
     /**
      * Gets the database connection.
      *
-     * @return \PDO
+     * @return PDO
      */
     public function getPdoConnection()
     {
@@ -892,7 +894,6 @@ class TestApi
      *
      * @param string $method
      * @param string $resource
-     * @param bool $addLog
      *
      * @return bool|array
      *   Array with 'error' key for errors on GET; true for errors on DELETE;
@@ -1546,7 +1547,7 @@ class TestApi
      * @return true
      *   Only if $this->throwOnError is false.
      *
-     * @throws \RuntimeException
+     * @throws RuntimeException
      *   Code 303 on success if $this->throwOnError is true.
     */
     protected function putProfile($profile_id, $database_id, array $data, $fields_only)
@@ -1616,7 +1617,7 @@ class TestApi
      * @return true
      *   Tf no new profile was created or if $this->throwOnError is false.
      *
-     * @throws \RuntimeException
+     * @throws RuntimeException
      *   Code 303 if a new profile was created and $this->throwOnError is true.
      */
     protected function putProfiles($database_id, array $data, array $parameters)
@@ -1674,7 +1675,7 @@ class TestApi
      * @return true
      *   Only if $this->throwOnError is false.
      *
-     * @throws \RuntimeException
+     * @throws RuntimeException
      *   Code 303 on success if $this->throwOnError is true.
      */
     protected function putSubprofile($subprofile_id, $collection_id, array $data, $fields_only)
@@ -2061,7 +2062,7 @@ class TestApi
      * @param array $parameters
      *   Query parameters as could be used in PDOStatement::execute.
      *
-     * @return \PDOStatement
+     * @return PDOStatement
      *   Executed PDO statement.
      */
     protected function dbExecutePdoStatement($query, $parameters)
@@ -2160,7 +2161,7 @@ class TestApi
      *   indexed; the difference with not passing the argument is that the
      *   return value is guaranteed to be an array (so it's countable, etc).
      *
-     * @return array|\Traversable
+     * @return array|Traversable
      *   An array of database rows (as arrays), or an equivalent traversable.
      */
     public function dbFetchAll($query, $parameters = [], $key = null)
@@ -2401,7 +2402,7 @@ class TestApi
      * @return int
      *   The ddtabase ID.
      *
-     * @throws \InvalidArgumentException
+     * @throws InvalidArgumentException
      *   If the collection ID is not recognized.
      */
     protected function getDatabaseIdForCollection($collection_id)

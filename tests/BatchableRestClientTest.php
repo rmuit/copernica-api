@@ -2,8 +2,12 @@
 
 namespace CopernicaApi\Tests;
 
+use CopernicaApi\BatchableRestClient;
+use InvalidArgumentException;
+use LogicException;
 use PDO;
 use PHPUnit\Framework\TestCase;
+use RuntimeException;
 
 /**
  * Tests for the RestClient class.
@@ -68,7 +72,7 @@ class BatchableRestClientTest extends TestCase
     {
         // This calls the client's get() despite having an empty string as the
         // endpoint.
-        $this->expectException(\RuntimeException::class);
+        $this->expectException(RuntimeException::class);
         $this->expectExceptionMessage('Copernica API request failed: Invalid method.');
         $this->getClient(true)->getMoreEntities();
     }
@@ -81,7 +85,7 @@ class BatchableRestClientTest extends TestCase
     public function testGetMoreOrderedDefault()
     {
         // This calls its internal getContext() which throws an exception.
-        $this->expectException(\RuntimeException::class);
+        $this->expectException(RuntimeException::class);
         $this->expectExceptionMessage("The current API resource/query/configuration is not suitable for querying entities in an 'ordered' way.");
         $this->getClient(true)->getMoreEntitiesOrdered();
     }
@@ -161,7 +165,7 @@ class BatchableRestClientTest extends TestCase
         // exception (if there are still items to be fetched).
         $entities = $client->getEntities("database/$database_id/profiles", ['limit' => 3]);
         $this->assertSame(3, count($entities));
-        $this->expectException(\InvalidArgumentException::class);
+        $this->expectException(InvalidArgumentException::class);
         $this->expectExceptionMessage('Invalid parameters passed.');
         $client->getMoreEntities(['start' => '2']);
     }
@@ -287,8 +291,8 @@ class BatchableRestClientTest extends TestCase
 
         // One quasi random test: another parameter than 'limit' throws
         // exception (if there are still items to be fetched).
-        $entities = $client->getEntities("database/$database_id/profiles", ['limit' => 3]);
-        $this->expectException(\InvalidArgumentException::class);
+        $client->getEntities("database/$database_id/profiles", ['limit' => 3]);
+        $this->expectException(InvalidArgumentException::class);
         $this->expectExceptionMessage('Invalid parameters passed.');
         $client->getMoreEntitiesOrdered(['start' => '5']);
     }
@@ -339,7 +343,7 @@ class BatchableRestClientTest extends TestCase
         // (Which is independent of the error; just noting it.)
         $this->assertSame(false, $client->allEntitiesFetched());
         // The recorded error is now thrown.
-        $this->expectException(\RuntimeException::class);
+        $this->expectException(RuntimeException::class);
         $this->expectExceptionMessage("The current dataset cannot be retrieved in an 'ordered' way: All entities in the previous batch had the same value for 'Email'; further 'ordered' fetching cannot deal with this.");
         $client->getMoreEntitiesOrdered();
     }
@@ -402,7 +406,7 @@ class BatchableRestClientTest extends TestCase
         $state = $client->getState(false, false);
         $client = new TestBatchableRestClient($api);
         $client->setState($state);
-        $this->expectException(\LogicException::class);
+        $this->expectException(LogicException::class);
         $this->expectExceptionMessage('datasetLastFetchedEntities class property does not have the expected structure');
         $client->getMoreEntitiesOrdered();
     }
@@ -412,7 +416,7 @@ class BatchableRestClientTest extends TestCase
      *
      * @param bool $no_table_initialization
      *
-     * @return \CopernicaApi\Tests\TestApi
+     * @return TestApi
      */
     protected function getApi($no_table_initialization = false)
     {
@@ -441,7 +445,7 @@ class BatchableRestClientTest extends TestCase
      *
      * @param bool $no_table_initialization
      *
-     * @return \CopernicaApi\BatchableRestClient
+     * @return BatchableRestClient
      */
     protected function getClient($no_table_initialization = false)
     {
