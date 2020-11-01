@@ -54,7 +54,7 @@ class Helper
      * @return mixed
      *   The normalized value.
      *
-     * @see \CopernicaApi\Tests\CopernicaHelperTest::provideDataForNormalizeInputValue()
+     * @see \CopernicaApi\Tests\HelperTest::provideDataForNormalizeInputValue()
      */
     public static function normalizeInputValue($value, array $field_struct)
     {

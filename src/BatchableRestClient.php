@@ -7,9 +7,13 @@ use LogicException;
 use RuntimeException;
 
 /**
- * Helper class for fetching a set of entities in batches.
+ * A REST API Client with functionality for batched fetching of entities.
+ *
+ * This can be used in place of RestClient for all operations; the
+ * 'getEntities' part has some added logic / methods (and keeps extra state
+ * internally).
  */
-class BatchedEntitiesFetcher extends RestClient
+class BatchableRestClient extends RestClient
 {
     /**
      * This is supposedly the maximum 'limit' parameter that any call will use.
@@ -33,11 +37,9 @@ class BatchedEntitiesFetcher extends RestClient
      * In order to be able to implement some 'batched data set' functionality
      * we have to assume a fixed ordering for our query results - and it seems
      * safe to do so even in some places where Copernica may not officially
-     * document this. In theory it's possible that we'll have two overlapping
-     * resource suffixes for queries which order by different properties, in
-     * which case we'd be in trouble. But... that chance seems theoretical.
+     * document this.
      *
-     * The values in below actually have three or four sub values:
+     * Below arrays have three or four sub values:
      * - The name of the property which results are ordered by, by default
      *   (or "always", if the specific API query doesn't support 'orderby').
      * - True if the property value is always unique per entity.
@@ -147,7 +149,7 @@ class BatchedEntitiesFetcher extends RestClient
     protected $orderedFetchImpossibleCode;
 
     /**
-     * BatchedEntitiesFetcher constructor.
+     * BatchableRestClient constructor.
      *
      * @param string $token
      *   The access token used by the wrapped class.
@@ -178,7 +180,7 @@ class BatchedEntitiesFetcher extends RestClient
      * @throws \RuntimeException
      *   If the result metadata are not successfully verified.
      */
-    public function getEntities($resource, array $parameters = array(), $reset_fetched_count = true)
+    public function getEntities($resource, array $parameters = [], $reset_fetched_count = true)
     {
         $this->lastCallResource = $resource;
         $this->lastCallParameters = $parameters;
@@ -307,7 +309,7 @@ class BatchedEntitiesFetcher extends RestClient
      *   part of the full data set. False if exceptions were suppressed for
      *   '400' errors and no getEntities() call was done earlier.
      *
-     * @see BatchedEntitiesFetcher::getMoreEntitiesOrdered()
+     * @see BatchableRestClient::getMoreEntitiesOrdered()
      */
     public function getMoreEntities(array $extra_parameters = [])
     {
@@ -387,7 +389,7 @@ class BatchedEntitiesFetcher extends RestClient
      *     wrong).
      *   - fall_back_to_unordered (boolean):
      *     If true and if the previous fetch returned entities which all had
-     *     the same 'ordered' value, this will fall back to getEntitiesMore(),
+     *     the same 'ordered' value, this will fall back to getMoreEntities(),
      *     i.e. increasing the 'start' parameter, at the risk of missing items
      *     like outlined in
      *
@@ -397,7 +399,7 @@ class BatchedEntitiesFetcher extends RestClient
      *   part of the full data set. False if exceptions were suppressed for
      *   '400' errors and no getEntities() call was done earlier.
      *
-     * @see BatchedEntitiesFetcher::getMoreEntities()
+     * @see BatchableRestClient::getMoreEntities()
      */
     public function getMoreEntitiesOrdered(array $extra_parameters = [], array $options = [])
     {
@@ -581,7 +583,7 @@ class BatchedEntitiesFetcher extends RestClient
      *   (Optional) False to omit security sensitive info, i.e. the token. This
      *   means the code which instantiates this class before calling setState()
      *   must know the token - and not setting it / setting a wrong token value
-     *   will have unknown consequences.
+     *   will have unspecified consequences.
      * @param bool $include_personal_info
      *   (Optional) False to omit potentially personally identifying info, i.e.
      *   entities fetched from the database. This will make a

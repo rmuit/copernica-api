@@ -2,14 +2,16 @@ Copernica REST API PHP tools [![Build Status](https://travis-ci.com/rmuit/sharps
 ============================
 
 This project contains
-* a ciient for the REST API (which adds some functionality and better error
+* a client for the REST API (which adds some functionality and better error
   handling around the CopernicaRestAPI class that Copernica offer for download);
+* helper classes for handling (larger/embedded) sets of entities;
 * a framework to enable writing automated tests for your PHP code that uses
   this library.
 
 ## Usage
 
-Use the RestClient class; act as if CopernicaRestAPI does not exist.
+Use the RestClient class and the two other classes mentioned below; act as if
+CopernicaRestAPI does not exist.
 
 RestClient contains get() / post() / put() and delete() calls (just like the
 standard CopernicaRestAPI); it also contains two extra calls getEntity() and
@@ -52,21 +54,34 @@ $profile = $client->getEntity("profile/$id");
 $profile = $client->getEntity("profile/$id", [], RestClient::GET_ENTITY_IS_REMOVED);
 
 // Get a list of entities; this will return only the relevant 'data' part from
-// the response: (If we want to have the full structure including start / count
-// / etc, we can use get()):
-$mailings = $client->getEntities('publisher/emailings');
-// If the list of mailings is longer than the limit returned by the API, we can
-// get the next batches like this: (example code; we may not actually want to
-// fetch them all before processing one giant array...)
-while ($next_batch = $client->getEntitiesNextBatch()) {
-    $mailings = array_merge($mailings, $next_batch);
-    // It is possible to pause execution and fetch the next batch in a separate
-    // PHP thread, with some extra work; check backupState() for this.
+// the response. (If we want to have the full structure including start / count
+// / etc, we can use get().)
+$profiles = $client->getEntities("database/$db_id/profiles");
+// The returned list has a zero-based index. If we want to access the mailings
+// by ID, here's a quick helper method.
+$mailings = Helper::rekeyEntities($profiles, 'ID');
+```
+
+Large sets of entities (larger than the limit which the API allows in one
+response) need to be fetched in batches. BatchableRestClient is a Client
+containing some helpful methods: getMoreEntities() and getMoreEntitiesOrdered().
+Either of these two methods should be used depending on what data set is being
+fetched; getMoreEntities() works for all types of entities but has a slightly
+higher risk of skipping entities in some cases. See the method comments for
+more detailed info. (Or, for starters, just copy the below example and replace
+by getMoreEntities() if things don't work.)
+```php
+use CopernicaApi\BatchableRestClient;
+
+$client = new BatchableRestClient(TOKEN);
+$profiles = $client->getEntities("database/$db_id/profiles", ['orderby' => 'modified', 'fields' => ['modified>=2020-01-01']]);
+
+// It is possible to pause execution and fetch the next batch in a separate
+// PHP thread, with some extra work; check getState() for this.
+while (!$client->allEntitiesFetched()) {
+    $next_batch = $client->getMoreEntitiesOrdered([], ['fall_back_to_unordered' => true]);
+    $profiles = array_merge($profiles, $next_batch);
 }
-// If we want to access the mailings by ID, here's a quick helper
-// method. (For mailings this is likely not useful; for e.g. profiles it might
-// be - and the second argument needs to be "ID" there.)
-$mailings = Helper::rekeyEntities($mailings, 'id');
 ```
 
 The response of some API calls contain lists of other entities inside an entity.
@@ -79,9 +94,9 @@ validate and 'unwrap' these metadata so the caller doesn't need to worry about
 it. An example:
 ```php
 $database = $client->getEntity("database/$db_id");
-$collections = CopernicaHelper::getEmbeddedEntities($database, 'collections');
-$collections = CopernicaHelper::rekeyEntities($collections, 'ID');
-$collection_fields = CopernicaHelper::getEmbeddedEntities($collections[$a_collection_id], 'fields');
+$collections = Helper::getEmbeddedEntities($database, 'collections');
+$collections = Helper::rekeyEntities($collections, 'ID');
+$collection_fields = Helper::getEmbeddedEntities($collections[$a_collection_id], 'fields');
 // Note if we only need the collections of one database, or the fields of one
 // collection, it is recommended to call the dedicated API endpoint instead.
 ```
@@ -142,25 +157,16 @@ better: feel free to file a bug report.
 Below text is likely unimportant to most people (who just want to use a REST
 API client class).
 
-### Contents of this library
+### Other contents of this repository
 
-- copernica_rest_api.php (the CopernicaRestAPI class) as downloaded from the
-  Copernica website (REST API v2 documentation - REST API example), with only a
-  few changes.
+The tests/ directory contains TestApi, a 'test implementation' of the Copernica
+API, i.e. a class that can be used instead of CopernicaRestAPI and that stores
+ata internally. Other code in tests/ are PHPUnit tests, and some small test
+helper classes; a few tests are real unit tests, but most need an API to work
+against, so they use TestApi.
 
-- A RestClient class which wraps around CopernicaRestAPI. Some comments reflect
-  gaps (around detailed error reporting) which cannot be improved yet without
-  further detailed knowledge about API responses (see examples above), though
-  these have almost disappeared in version 2.
-
-- A 'test implementation' of the Copernica API, i.e. a class that can be used
-  instead of CopernicaRestAPI and that stores data internally. And PHPUnit
-  tests which use this test API.
-
-The 'test API' should enable writing tests for your own processes which use
-RestClient. (See TestRestClient.)
-
-The extra/ directory may contain example tests/other code I wrote for my own
+TestApi should enable writing tests for your own processes which use the REST
+API. The extra/ directory contains example tests/other code I wrote for my own
 processes.
 
 #### Don't use CopernicaRestAPI

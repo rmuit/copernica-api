@@ -2,7 +2,6 @@
 
 namespace CopernicaApi\Tests;
 
-use CopernicaApi\BatchedEntitiesFetcher;
 use PDO;
 use PHPUnit\Framework\TestCase;
 
@@ -17,7 +16,7 @@ use PHPUnit\Framework\TestCase;
  *
  * This class implicitly depends on RestClientTest and ApiBehaviorTest; we have
  * to trust that both the client class and the API behave as expected and are
- * fully tested, so we can concentrate on just BatchedEntitiesFetcher logic.
+ * fully tested, so we can concentrate on just BatchableRestClient logic.
  * (We have not created a phpunit.xml specifically to encode this dependency /
  * order because it's unlikely this will cause issues.)
  *
@@ -27,7 +26,7 @@ use PHPUnit\Framework\TestCase;
  *   and just trust the API to behave as expected (i.e. this class is actually
  *   implicitly testing part of those intricacies), for now.
  */
-class BatchedEntitiesFetcherTest extends TestCase
+class BatchableRestClientTest extends TestCase
 {
     /**
      * ID for our copernica database. The value doesn't matter.
@@ -315,16 +314,16 @@ class BatchedEntitiesFetcherTest extends TestCase
 
         $entities = $client->getEntities("database/$database_id/profiles", ['orderby' => 'Email', 'limit' => 3]);
         $this->assertSame(3, count($entities));
-        // This removes 2 entities that were fetched previously. It also
-        // records an error message about having 3 items with the same value,
-        // but does not throw an exception yet (because who knows the caller
-        // still wants to use the data already, despite not having fetched a
-        // full set).
+        // This fetches 3 but removes 2 entities that were fetched previously.
+        // It also records an error message about having 3 items with the same
+        // value, but does not throw an exception yet (because who knows the
+        // caller still wants to use the data already, despite not having
+        // fetched a full set).
         $entities = $client->getMoreEntitiesOrdered();
         $this->assertSame(1, count($entities));
 
         // If we pass the fallback option, we can actually continue and should
-        // now get just the last 2 items.
+        // now get just the last 2 items. (See below for non-fallback.)
         $entities = $client->getMoreEntitiesOrdered(['limit' => 10], ['fall_back_to_unordered' => true]);
         $this->assertSame(2, count($entities));
         // Changes the below a little, even though it isn't necessary.
@@ -356,7 +355,7 @@ class BatchedEntitiesFetcherTest extends TestCase
         // that is not our issue.
         $api = $this->getApi();
 
-        $client = new TestBatchedEntitiesFetcher($api);
+        $client = new TestBatchableRestClient($api);
         $database_id = self::DATABASE_ID;
         $client->post("database/$database_id/profiles", ['fields' => ['Email' => '1@c.cc', 'Birthdate' => '2000-01-07']]);
         $client->post("database/$database_id/profiles", ['fields' => ['Email' => '2@c.cc', 'Birthdate' => '2000-01-06']]);
@@ -371,7 +370,7 @@ class BatchedEntitiesFetcherTest extends TestCase
         $state = $client->getState();
         // We could be doing this much later, with a previously saved state;
         // getMoreEntitiesOrdered() still works:
-        $client = new TestBatchedEntitiesFetcher($api);
+        $client = new TestBatchableRestClient($api);
         $client->setState($state);
         $entities = $client->getMoreEntitiesOrdered();
         $this->assertSame(2, count($entities));
@@ -387,7 +386,7 @@ class BatchedEntitiesFetcherTest extends TestCase
         // are not using tokens in test classes.)
         $client->getEntities("database/$database_id/profiles", ['limit' => 3]);
         $state = $client->getState(false, false);
-        $client = new TestBatchedEntitiesFetcher($api);
+        $client = new TestBatchableRestClient($api);
         $client->setState($state);
         $entities = $client->getMoreEntities();
         $this->assertSame(3, count($entities));
@@ -401,7 +400,7 @@ class BatchedEntitiesFetcherTest extends TestCase
         // info:
         $client->getEntities("database/$database_id/profiles", ['limit' => 3]);
         $state = $client->getState(false, false);
-        $client = new TestBatchedEntitiesFetcher($api);
+        $client = new TestBatchableRestClient($api);
         $client->setState($state);
         $this->expectException(\LogicException::class);
         $this->expectExceptionMessage('datasetLastFetchedEntities class property does not have the expected structure');
@@ -438,14 +437,14 @@ class BatchedEntitiesFetcherTest extends TestCase
     }
 
     /**
-     * Gets BatchedEntitiesFetcher (by default) having access to profile tables.
+     * Gets BatchableRestClient (by default) having access to profile tables.
      *
      * @param bool $no_table_initialization
      *
-     * @return \CopernicaApi\BatchedEntitiesFetcher
+     * @return \CopernicaApi\BatchableRestClient
      */
     protected function getClient($no_table_initialization = false)
     {
-        return new TestBatchedEntitiesFetcher($this->getApi($no_table_initialization));
+        return new TestBatchableRestClient($this->getApi($no_table_initialization));
     }
 }

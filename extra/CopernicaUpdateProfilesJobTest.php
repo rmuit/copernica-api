@@ -2036,7 +2036,7 @@ class CopernicaUpdateProfilesJobTest extends TestCase
         } else {
             // We don't know the timezone used by the real API and we don't
             // know if there's even a setting. Take our default.
-            $timezone = CopernicaHelper::TIMEZONE_DEFAULT;
+            $timezone = Helper::TIMEZONE_DEFAULT;
         }
         $date->setTimezone(new DateTimeZone($timezone));
         return $date;
