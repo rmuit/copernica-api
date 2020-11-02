@@ -78,11 +78,10 @@ class BatchableRestClient extends RestClient
         // "fromdate" parameter, so we could support it, but we'd need to
         // re-code something to only support the 'main' one and not the
         // ms/emailings per (sub) profile. @todo test this, sometime.)
-        //'publisher/emailings' => ['timestamp', false, 'asc', 'fromdate'],
-        // @TODO for starters, uncomment the above line to make publisher
-        //   emailings work. Seems like it would, there is very little
-        //   untested code in this class which is specific to this
-        //   functionality, but I'm not taking chances until it's confirmed.
+        'publisher/emailings' => ['timestamp', false, 'asc', 'fromdate'],
+        // @todo make tests specifically for emailings. It's non-urgent beause
+        //   the amount of untested code (when a 4th array value is present) is
+        //   small, and we'd first need to add support for emailings to TestApi.
     ];
 
     /**
@@ -434,6 +433,11 @@ class BatchableRestClient extends RestClient
             }
         }
 
+        // Reminder: query parameter names, unlike field names and parameter
+        // values, are case sensitive. Reset 'start' used by getMoreEntities().
+        $parameters = $this->lastCallParameters;
+        unset($parameters['start']);
+
         // This supposedly doesn't throw a RuntimeException because it already
         // would have done that in the previous getEntities() call which would
         // have set $this->orderedFetchImpossibleReason. If it did throw one,
@@ -442,13 +446,13 @@ class BatchableRestClient extends RestClient
         if (isset($context['query_param'])) {
             // The query parameter to set is not "fields". Hardcoded logic: we
             // are assuming the query has no 'orderby' or 'order' parameter,
-            // i.e. we cannot influence how the query results are ordered. The
-            // 'order_field' value is only meant for deriving the 'last value
-            // from the previous batch'. Right now, the 'order' and
-            // 'order_field_unique' values are unused for constructing query
-            // parameters (only by checks afterwards), and we assume we should
-            // just always stick this 'last value' into the 'query_param'
-            // verbatim which will do the right thing. Example:
+            // i.e. we cannot influence how the query results are ordered.
+            // Right now, the 'order' and 'order_field_unique' values are not
+            // used for constructing query parameters (only by checks
+            // afterwards). The'order_field' value is only meant for deriving
+            // the 'last value from the previous batch'., and we assume we
+            // should just always stick this 'last value' into the
+            // 'query_param' verbatim which will do the right thing. Example:
             // - for e-mailings, 'query_param' value is "fromdate" and
             //   'orderby' is "timestamp".
             // - we should just stick the last 'timestamp' field value into the
@@ -475,8 +479,6 @@ class BatchableRestClient extends RestClient
             // from the already existing ones (i.e. override the values with
             // themselves). Unset 'start' and instead add/change a filter on
             // the 'order' field.
-            $parameters = array_change_key_case($this->lastCallParameters);
-            unset($parameters['start']);
             $parameters['orderby'] = $context['order_field'];
             $parameters['order'] = $context['order'];
             $filter_without_value = $parameters['orderby'] . ($parameters['order'] === 'desc' ? '<' : '>');
@@ -509,10 +511,10 @@ class BatchableRestClient extends RestClient
             // (sub)profile field called "modified", which makes that field be
             // filtered rather than the entity's 'modified' property - even
             // though the API orders by the latter, and so we get the latter.)
-            $first_value = $this->getEntityValue($this->datasetLastFetchedFirstEntity, $parameters['orderby']);
-            if ($parameters['order'] === 'desc' ? $first_value > $filter_value : $first_value < $filter_value) {
-                $order = $parameters['order'] === 'desc' ? 'descending' : 'ascending';
-                throw new RuntimeException("The dataset was supposedly ordered $order by '{$parameters['orderby']}', starting at \"$filter_value\", but the first returned '{$parameters['orderby']}' value is \"$first_value\"", 803);
+            $first_value = $this->getEntityValue($this->datasetLastFetchedFirstEntity, $context['order_field']);
+            if ($context['order'] === 'desc' ? $first_value > $filter_value : $first_value < $filter_value) {
+                $order = $context['order'] === 'desc' ? 'descending' : 'ascending';
+                throw new RuntimeException("The dataset was supposedly ordered $order by '{$context['order_field']}', starting at \"$filter_value\", but the first returned '{$context['order_field']}' value is \"$first_value\"", 803);
             }
         }
 
@@ -703,9 +705,9 @@ class BatchableRestClient extends RestClient
      *     hardcoded logic to determine when something is a property.)
      *   - order_field_unique:
      *   - order: asc/desc.
-     *   - query_param: query parameter that needs to be populated with the
-     *     last value from the previous batch, if it's not the general "fields"
-     *     parameter.
+     *   - query_param: optional; query parameter that needs to be populated
+     *     with the last value from the previous batch, if it's not the general
+     *     "fields" parameter.
      *
      * @throws RuntimeException
      *   No default 'orderby' and related properties are defined for this API
@@ -782,23 +784,28 @@ class BatchableRestClient extends RestClient
     protected function getEntityValue(array $entity, $field_name)
     {
         // The specific use case for this function is: our field/property name
-        // is sortable, by the REST API. The API jumbles both fields and
-        // properties into one parameter - and hardcodes which things are a
-        // property (see API docs on the web / TestApi class). Actually
-        // "modified" will not work because of inconsistent handling of
-        // order/filter parameters - and "code" will also not work because
-        // that's a special case for the "fields" filter parameter and "random"
-        // will also not work because that's a special case for the orderby
-        // parameter. But that's not our problem. All other values not given
-        // here should be fields, not properties.
+        // is sortable, by the REST API. Two things here:
+        // - Not all entities have 'fields'. (Only profiles/subprofiles do.
+        //   Let's keep in mind that databases/collections have a "fields"
+        //   property but still has no 'field values' in the way we mean it.
+        //   This method doesn't work for them, and it is up to us to make sure
+        //   it's never called for databases/collections.)
+        // - The API jumbles both fields and properties into one parameter -
+        //   and hardcodes which things are a property (see API docs on the web
+        //   / TestApi class). Actually "modified" will not work because of
+        //   inconsistent handling of order/filter parameters - and "code" will
+        //   also not work because that's a special case for the "fields"
+        //   filter parameter and "random" will also not work because that's a
+        //   special case for the orderby parameter. But that's not our problem.
+        //   All other values not given here should be fields, not properties.
         $field_name = strtolower($field_name);
-        if (in_array($field_name, ['id', 'modified'], true)) {
-            // Some entities have 'ID' property, some 'id'.
-            if (!isset($entity[$field_name])) {
+        if (!isset($entity['fields']) || in_array($field_name, ['id', 'modified'], true)) {
+            if (!isset($entity[$field_name]) && $field_name === 'id') {
+                // Some entities have 'ID' property, some 'id'.
                 $entity = array_change_key_case($entity);
-                if (!isset($entity[$field_name])) {
-                    throw new RuntimeException("Entity contains no '$field_name' property.", 803);
-                }
+            }
+            if (!isset($entity[$field_name])) {
+                throw new RuntimeException("Entity contains no '$field_name' property.", 803);
             }
         } else {
             $entity = $entity['fields'];
