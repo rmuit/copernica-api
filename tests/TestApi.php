@@ -497,7 +497,7 @@ class TestApi
                         // with the "invalid ID" messages in other places.
                         return $this->returnError('Subprofile could not be created');
                     }
-                    $id = $this->postSubprofile($parts[1],$collection_id, $data);
+                    $id = $this->postSubprofile($parts[1], $collection_id, $data);
                     if (is_numeric($id) || $id === false) {
                         // CopernicaRestAPI picks the ID out from the header and
                         // returns a string.
