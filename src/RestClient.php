@@ -846,35 +846,38 @@ class RestClient
         }
         $headers = $response['headers'];
         // We want to only have this called for 303.
-        if (!preg_match('/^HTTP\/[\d\.]+ 303/', $headers[0])) {
+        if (!preg_match('/^HTTP\/[\d.]+ 303/', $headers[0])) {
             return false;
         }
         if (!isset($headers['location']) || is_array($headers['location'])) {
             return false;
         }
-        // The 'token' argument is in the query and we don't need it. If
-        // there's another argument, that means 1) somehow a 'canonical entity
-        // URI' needs an argument, which would be quite strange - or 2) an API
-        // change introduced another 'unneeded' argument just like token. In
-        // this instance, we won't be strict - and we'll just ignore the query.
-        // The path is including slash but excluding the API version. (Which is
-        // apparently also a working URL - just one that is never used by
-        // the API client class because it always inserts a version in paths.)
-        // As per the comment in the caller, let's not check if the location
-        // matches the original resource URL.
+        // The location header seems to almost always* return the same URL that
+        // we requested (including bogus query parameters that we may have
+        // added, and including the token), i.e. it doesn't seem to have (full)
+        // internal logic to return the canonical URI for an updatable entity
+        // by itself. Seemingly the only difference with the input is the
+        // 'version prefix' is dropped from the URL. (The URL without prefix
+        // apparently also always works - it's just never used by our API
+        // client which always inserts a version in paths.) We'll just
+        // return the path without parameters, which should be good for most
+        // PUT calls*, because we don't really know what the benefit is of
+        // adding more logic here (and we don't want to return the token).
+        // * not in the "profiles+create" case documented just below. In that
+        //   case, stripping the query arguments actually makes the 'Location'
+        //   less specific - but so far, we don't care.
         $path = ltrim(parse_url($headers['location'], PHP_URL_PATH), '/');
-        // We'd be surprised if a new entity was created as the result of a PUT
-        // request, but both the remarks about creating new entities in
-        // https://www.copernica.com/en/documentation/restv2/rest-requests and
-        // the code of CopernicaRestAPI::sendData() suggest it may be possible.
-        // So let's doublecheck it. According to sendData() it only consists of
+        // Some PUT calls actually return an 'X-Created' header: we know of
+        // the "database/DID/profiles" call with parameter create=true. (The
+        // corresponding "profile/PID/subprofiles/CID" call doesn't return an
+        // 'X-Created' header at the time of writing, but that may get fixed.)
+        // In that case the 'location' header does also contain a URL pointing
+        // to the newly created entity - not the original queried path. So
+        // let's doublecheck it. According to sendData() it only consists of
         // digits. If it's equal to the last part of the location, we consider
         // it duplicate info we can discard. If it's different... that's so
         // strange we'll let the caller figure things out.
-        if (
-            isset($headers['X-Created'])
-            && substr($path, -strlen($headers['X-Created'])) != $headers['X-Created']
-        ) {
+        if (isset($headers['X-Created']) && substr($path, -strlen($headers['X-Created'])) != $headers['X-Created']) {
             return false;
         }
         return $path;
@@ -990,9 +993,6 @@ class RestClient
      *   Copernica introduces new properties - but I'm too scared to break
      *   existing code by throwing an unnecessary exception. Maybe... make that
      *   one optional somehow?
-     * @todo negative 'start' parameter returns the negative integer in 'start'
-     *   and zero count/items. Check what we want to do with that: likely not
-     *   throw an exception because we want to emulate Copernica?
      */
     protected function checkEntitiesMetadata(array $struct, array $parameters, $struct_descn)
     {
@@ -1021,7 +1021,9 @@ class RestClient
         if ($struct['start'] !== $expected_start) {
             throw new RuntimeException("Unexpected structure in $struct_descn: 'start' value is " . json_encode($struct['start']) . ' but is expected to be 0.', 804);
         }
-        if ($struct['count'] > $struct['limit']) {
+        // 'count > 0' is added because a negative limit is accepted by the API
+        // and results in 0 items.
+        if ($struct['count'] > $struct['limit'] && $struct['count'] > 0) {
             throw new RuntimeException("Unexpected structure in $struct_descn: 'count' value (" . json_encode($struct['count']) . ") is larger than 'limit' (" . json_encode($struct['limit']) . ').', 804);
         }
         if (isset($struct['total']) && $struct['start'] + $struct['count'] > $struct['total']) {

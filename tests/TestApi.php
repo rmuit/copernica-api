@@ -311,11 +311,14 @@ class TestApi
                 if (!isset($parts[2]) || $parts[2] === 'fields') {
                     return $this->getProfile($parts[1], $context_id, isset($parts[2]));
                 } elseif ($parts[2] === 'subprofiles') {
-                    // @todo check if we should return error for too many parts. Probably not -> 4, 0
-                    $return = $this->checkUrlPartCount($parts, 4, 4);
+                    $return = $this->checkUrlPartCount($parts, 4, 0);
                     if ($return !== true) {
                         return $return;
                     }
+//                    $collection_id = $this->validateCollectionId($parts[3], $context_id);
+//                    if (!$collection_id) {
+//                        return $this->returnError(...);
+//                    }
                     throw new LogicException("TestApi does not implement GET $resource yet.");
                 } elseif (in_array($parts[2], ['interests', 'ms', 'publisher', 'files'], true)) {
                     throw new LogicException("TestApi does not implement GET $resource yet.");
@@ -376,6 +379,11 @@ class TestApi
             $context_id = array_pop($parts);
         }
 
+        // Many POST requests (I guess all those whose endpoint URL is a single
+        // entity, at least) do the same as PUT requests. I have not seen this
+        // explicitly stated... except in the first few paragraphs in
+        // https://www.copernica.com/en/documentation/restv2/rest-put-database-profiles
+        // (stating that that particular call is an "exception to the rule").
         switch ($parts[0]) {
             case '_simulate_exception':
                 $return = $this->checkUrlPartCount($parts, 3, 3);
@@ -482,7 +490,14 @@ class TestApi
                     if ($return !== true) {
                         return $return;
                     }
-                    $id = $this->postSubprofile($parts[1], $parts[3], $data);
+                    $collection_id = $this->validateCollectionId($parts[3], $context_id);
+                    if (!$collection_id) {
+                        // Copernica returns the same message for any invalid
+                        // collection ID, though its concept is not consistent
+                        // with the "invalid ID" messages in other places.
+                        return $this->returnError('Subprofile could not be created');
+                    }
+                    $id = $this->postSubprofile($parts[1],$collection_id, $data);
                     if (is_numeric($id) || $id === false) {
                         // CopernicaRestAPI picks the ID out from the header and
                         // returns a string.
@@ -626,17 +641,19 @@ class TestApi
                     //  - explicit different application from POST, unlike many other resources
                     //  - this is mis-documented at https://www.copernica.com/en/documentation/restv2/rest-put-profile-subprofiles
                     //  - whatever else we say with database/profiles
-                    //  - difference from profiles is the body data because that has no 'fields' subsection?
-                    //    ^ Not tried. @todo Test.
+                    //  - difference from profiles is the body data because that has no 'fields' subsection.
+                    //    (As manually tested. If you wrap it in 'fields', nothing happens. Unless you have a field named "fields", presumably.)
                     //  - 'fields' query param (not body arg) behaves DIFFERENT from database//profiles:
                     //     illegal param leads to error here.
                     //     (This means we should test more, and explicitly test other tings as well I think)
-                    // @todo check if we should return error for too many parts. Probably not -> 4, 0
-                    //  ^ actually, probably remove because 4th parameter not required? See database/profiles
-                    $return = $this->checkUrlPartCount($parts, 4, 4);
+                    $return = $this->checkUrlPartCount($parts, 4, 0);
                     if ($return !== true) {
                         return $return;
                     }
+//                    $collection_id = $this->validateCollectionId($parts[3], $context_id);
+//                    if (!$collection_id) {
+//                        return $this->returnError(...);
+//                    }
                     throw new LogicException("TestApi does not implement PUT $resource yet.");
                 } elseif (isset($parts[2]) && $parts[2] === 'interests') {
                     throw new LogicException("TestApi does not implement PUT $resource yet.");
@@ -879,9 +896,11 @@ class TestApi
             $structure = $this->databasesStructure;
         }
 
+        // All API calls match names case insensitively, so we'll do too.
+        $name = strtolower($name);
         foreach ($structure as $id => $member) {
             // We should be able to blindly assume that 'name' exists.
-            if ($member['name'] === $name) {
+            if (strtolower($member['name']) === $name) {
                 return $id;
             }
         }
@@ -960,10 +979,14 @@ class TestApi
                     break;
 
                 case 'database':
-                    if (
-                        filter_var($parts[1], FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]) === false
-                        || !isset($this->knownValues['database'][$parts[1]])
-                    ) {
+                    if (filter_var($parts[1], FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]) === false) {
+                        // Database ID can also be name - but the name cannot
+                        // be numeric.
+                        $parts[1] = $this->getMemberId($parts[1]);
+                        if (!$parts[1]) {
+                            return $this->returnError('No database with supplied ID');
+                        }
+                    } elseif (!isset($this->knownValues['database'][$parts[1]])) {
                         return $this->returnError('No database with supplied ID');
                     }
                     break;
@@ -1009,6 +1032,27 @@ class TestApi
         }
 
         return $parts;
+    }
+
+    /**
+     * Validates a collection ID/name.
+     *
+     * @param string $id_or_name
+     *   The ID or name of the collection.
+     * @param int $database_id
+     *   The related database ID.
+     *
+     * @return int
+     *   The ID; zero if invalid / not found.
+     */
+    public function validateCollectionId($id_or_name, $database_id)
+    {
+        if (filter_var($id_or_name, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]) === false) {
+            $id_or_name = $this->getMemberId($id_or_name, $this->databasesStructure[$database_id]['collections']);
+        } elseif (!isset($this->knownValues['collection'][$id_or_name])) {
+            $id_or_name = 0;
+        }
+        return $id_or_name;
     }
 
     /**
@@ -1204,7 +1248,7 @@ class TestApi
             $payload = "{\"error\":{\"message\":\r\n" . json_encode($error_message) . '}}';
             if ($method !== 'GET') {
                 if ($method === 'PUT' && $http_code == 303) {
-                    throw new InvalidArgumentException("Not sure how to throw 303.. (Do we include error message in body? Location header? A combination of both supposedly never happens and will break RestClient.)");
+                    throw new InvalidArgumentException("Not sure how to throw 303. (Do we include error message in body? Location header? A combination of both supposedly never happens and will break RestClient.)");
                 }
                 $payload = "HTTP/1.1 $http_code No descriptive string\r\nX-Fake-Header: fakevalue\r\nX-Fake-Header2: fakevalue2\r\n\r\n$payload";
             }
@@ -1341,8 +1385,6 @@ class TestApi
         // collection|profile/X/subprofiles about a 'dataonly' parameter. This
         // doesn't unwrap the 'data', and still returns 'total', so if it does
         // anything, I don't know what.
-        // @TODO test it. If it doesn't do anything for profile and sub, tell
-        //   Copernica. See bottom of ApiBehaviorTest.
         if (!empty($parameters['dataonly'])) {
             throw new LogicException("TestApi does not implement 'dataonly' parameter yet.");
         }
@@ -1397,7 +1439,7 @@ class TestApi
     }
 
     /**
-     * API endpoint emulation: retrieves profiles.
+     * API endpoint emulation: retrieves subprofiles.
      *
      * @param int $collection_id
      *   A collection ID, which must be validated already as existing.
@@ -1502,7 +1544,7 @@ class TestApi
      * @param int $profile_id
      *   A profile ID.
      * @param int $collection_id
-     *   A collection ID.
+     *   A collection ID, which must be validated already as existing.
      * @param array $data
      *   Data as provided to the request. The first-level keys must be
      *   lower case but field names in 'fields' are matched case insensitively.
@@ -1513,16 +1555,6 @@ class TestApi
      */
     protected function postSubprofile($profile_id, $collection_id, array $data)
     {
-        // Profile ID was validated in initRestCall(). Collection ID was not.
-        if (
-            filter_var($collection_id, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]) === false
-            || !isset($this->knownValues['collection'][$collection_id])
-        ) {
-            // Copernica returns the same message for any non-numeric argument
-            // (though its concept is not consistent with the "invalid ID"
-            // messages in other places.)
-            return $this->returnError('Subprofile could not be created');
-        }
         $data = ['_pid' => $profile_id, '_secret' => $this->getRandomSecret()]
             + $this->normalizeFieldsInput($data, $collection_id, true);
         $data['_spid'] = $this->dbInsertRecord('subprofile_coll', ['collection_id' => $collection_id]);
@@ -1639,6 +1671,8 @@ class TestApi
 
         throw new LogicException("TestApi {$this->currentMethod} {$this->currentResource} has not been tested yet.");
 
+        // @todo $parameters['fields'] is required. (Also for subprofiles.)
+        //    'message' => (Copernica API request failed: ) 'URL parameter fields is required'
         if (empty($data['fields'])) {
             $updates = $this->normalizeFieldsInput($data['fields'], $database_id);
             if ($updates) {

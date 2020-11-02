@@ -107,13 +107,14 @@ class ApiBehaviorTest extends TestCase
      */
     public function testApiExceptions($class_method, $url, $error_code, $expected_message, $api, $send_data = [])
     {
+        $this->expectException(\RuntimeException::class);
         $this->expectExceptionMessage($expected_message);
         $this->expectExceptionCode($error_code);
         if (in_array($class_method, ['post', 'put'], true)) {
             $api->$class_method($url, $send_data);
         } else {
             if ($send_data) {
-                throw new LogicException("\$send_data cannot be nonemppty for $class_method().");
+                throw new LogicException("\$send_data cannot be nonempty for $class_method().");
             }
             $api->$class_method($url);
         }
@@ -298,11 +299,13 @@ class ApiBehaviorTest extends TestCase
         // non-array 'fields' section is simply ignored. (And superfluous
         // path components have been tested above -> no errors to check here.)
 
-        // GET profile/PID/subprofiles/CID: not implemented yet. <- @todo. (also all *profileids GET calls then?)
+        // GET profile/PID/subprofiles/CID has no error paths to check. (Superfluous
+        // path components and query parameters are ignored -> checked elsewhere. <- @todo (check this, while implementing the endpoint & tests. I tested manually.)
         // POST:
-        // - Note it's not totally analogous to profile because the path is a
-        //   subpath of /profile/PID, not of /collection/CID.)
-        // - Superfluous path components are ignored -> checked elsewhere. <- @todo
+        // - Note it's not totally analogous to profile because 1) it has two
+        //   (required) variable components instead of one; 2) the path is a
+        //   subpath of /profile/PID, not of /collection/CID.
+        // - Superfluous path components are ignored -> checked elsewhere.
         // - Strange collection ID tests are implemented here (not in "basic
         //   general errors 2") because the error message is different: not
         //   "Unknown collection".
@@ -313,7 +316,8 @@ class ApiBehaviorTest extends TestCase
             $data[] = ['POST', "profile/$profile_id/subprofiles/$path_suffix", 400, '"Subprofile could not be created"', $api];
         }
         // PUT profile/PID/subprofiles/CID: not implemented yet.
-        //   <- NOTE ITS DIFFERENCE. It may or may not need CID, it's not documented correctly at https://www.copernica.com/en/documentation/restv2/rest-put-profile-subprofiles
+        // - Superfluous path components are ignored -> checked elsewhere. <- @todo (I tested manually so far)
+        //   <- NOTE ITS DIFFERENCE. CID is required. (It's not documented correctly at https://www.copernica.com/en/documentation/restv2/rest-put-profile-subprofiles
         // @todo ^
         //   - Don't forget testing parameters (which POST does not have)
         //   - Note that PUT with strange/missing IDs is not implemented yet
@@ -383,8 +387,13 @@ class ApiBehaviorTest extends TestCase
         $api = $this->getTestApiWithProfileStructure();
 
         $structure = $api->getDatabasesStructure();
-        $database_id = $api->getMemberId('Test');
-        $collection_id = $api->getMemberId('Test', $structure[$database_id]['collections']);
+        // Database IDs in URLs, and collection IDs in
+        // 'profile/PID/subprofiles/CID' URLs, can also be replaced by their
+        // names(matching case insensitively); we test both randomly.
+        $database_name = 'tEst';
+        $database_id = $api->getMemberId($database_name);
+        $collection_name = 'tESt';
+        $collection_id = $api->getMemberId($collection_name, $structure[$database_id]['collections']);
         $timestamp = time();
 
         // Phase 1 - profile CRUD.
@@ -420,11 +429,11 @@ class ApiBehaviorTest extends TestCase
         ];
         $data = ['tonky' => ['nothing' => 'not'], 'secret' => 'secret!', 'fields' => $profile];
         $profile_id = $api->post("database/$database_id/profiles", $data);
-        $profile2_id = $api->post("database/$database_id/profiles/$profile_id", $data);
+        $profile2_id = $api->post("database/$database_name/profiles/$profile_id", $data);
         $profile3_id = $api->post("database/$database_id/profiles//bogus/");
-        $profile4_id = $api->post("database/$database_id/profiles", ['FIELDS' => $profile]);
+        $profile4_id = $api->post("database/$database_name/profiles", ['FIELDS' => $profile]);
         // Get data, see if it gets returned in the expected format.
-        $result = $expected_profiles = $api->get("database/$database_id/profiles");
+        $result = $expected_profiles = $api->get("database/$database_name/profiles");
         // Test that all secrets are different and adhere to a certain format.
         // Then unset because we can't compare them below.
         $previous_value = '';
@@ -521,18 +530,15 @@ class ApiBehaviorTest extends TestCase
         // Compare to $expected_profiles (the result we fetched earlier), not
         // $expected (the array we constructed), because that has correct
         // created/modified/secret/etc for comparison
-        // @todo still make test for limit <= 0, start.
-        //   Maybe we should just make loops to go through some of these, so we
-        //   still see what we're doing.
         // @todo still test orderby and multiple conditions for the same field.
-        //   (We've implemented special support for id/modified already in
-        //   TestApi, but are not testing iet yet.) Likely first test defaults
-        //   for all types, per above.
+        //   (We've implemented special support for non-fields "id"/"modified"
+        //   already in TestApi, but are not testing iet yet.)
         // @todo when we get here: simplify by first separating values for
         //   'total' out into separate test (and mention that it's conceptually
         //   not a test but an overly detailed spec); follow/incorporate
-        //   TestApi::normalizeEntitiesParams() Likely for 'orderby' and
-        //   'order' too. Still test boolean values with 'order'?
+        //   TestApi::normalizeEntitiesParams() Likely for 'orderby', 'order',
+        //   'start', 'limit' (at least the strange values) too. Still test
+        //   boolean values with 'order'?
         //   (TestApi::getSqlOrderByFromParameters() suggests they are all ASC.)
         $result = $api->get("database/$database_id/profiles/$profile_id", ['fields' => false, 2 => 4, 'bogus' => 345, 'total' => 'TRue']);
         $this->assertSame($expected_profiles, $result);
@@ -548,6 +554,18 @@ class ApiBehaviorTest extends TestCase
         // Filtering selects [0, 1]; order descending, limit 1 -> selects [1]
         $this->assertSame(
             ['start' => 0, 'limit' => 1, 'count' => 1, 'data' => [$expected_profiles['data'][1]], 'total' => 2],
+            $result
+        );
+        // Negative start/limit parameter: returns 0 items/count, keeps the
+        // start/limit the same.
+        $result = $api->get("database/$database_id/profiles", ['start' => -2]);
+        $this->assertSame(
+            ['start' => -2, 'limit' => 100, 'count' => 0, 'data' => [], 'total' => 4],
+            $result
+        );
+        $result = $api->get("database/$database_id/profiles", ['limit' => -2]);
+        $this->assertSame(
+            ['start' => 0, 'limit' => -2, 'count' => 0, 'data' => [], 'total' => 4],
             $result
         );
         // Filtering on multiple conditions, empty fields: see after put.
@@ -710,14 +728,12 @@ class ApiBehaviorTest extends TestCase
         //
         // Note the POST URL is profile/PID/subprofiles/CID, not
         // collection/CID/subprofiles (which does not exist).
-        // The PUT-multiple URL is profile/PID/subprofiles/CID <- @todo verify if CID is indeed required, after implementing
+        // The PUT-multiple URL is profile/PID/subprofiles/CID <- @todo verify if CID is indeed required <- yes it is; that 'too few parts' is tested already (though the path itself isn't implmented yet)
         // There are two GET-multiple URLs:
         // - collection/CID/subprofiles (which has parameters)
-        // - profile/PID/subprofiles/CID (which has no parameters) <- @todo verify
+        // - profile/PID/subprofiles/CID (which has no parameters) <- @todo verify this fact, implement in TestApi, make tests.
         // (Which one is the subprofile equivalent to database/ID/profiles,
         // depends on how you look at things / on the application, I guess...)
-        // @TODO implement/test GET profile/PID/subprofiles/CID. Check if it
-        //   has any parameters because the docs suggest it does not.
 
         // Same insert/get tests for subprofile - except there's no empty
         // 'properties' (so no 'secret' either), only fields.
@@ -727,7 +743,7 @@ class ApiBehaviorTest extends TestCase
             'actIONTime' => '2020-04-27 14:15:34',
         ];
         $subprofile_id = $api->post("profile/$profile_id/subprofiles/$collection_id", ['wonky' => 'yes'] + $subprofile);
-        $subprofile2_id = $api->post("profile/$profile_id/subprofiles/$collection_id", $subprofile);
+        $subprofile2_id = $api->post("profile/$profile_id/subprofiles/$collection_name", $subprofile);
         $subprofile3_id = $api->post("profile/$profile2_id/subprofiles/$collection_id/bogus/path");
 
         $result = $expected_subprofiles = $api->get("collection/$collection_id/subprofiles");
@@ -1194,39 +1210,3 @@ class ApiBehaviorTest extends TestCase
         return 99984;
     }
 }
-/*
- * @TODO tell Copernica about docs:
- * - https://www.copernica.com/en/documentation/restv2/rest-get-database-profiles and
- *   https://www.copernica.com/en/documentation/restv2/rest-get-collection-subprofiles
- *   are a bit inconsistent; the latter has more info about parameters on the
- *   page itself. This is a good idea for the 'total' parameter because it can
- *   speed up calls and lighten server load, so IMHO this should be copied to
- *   the profiles page and be more explicit about speedup.
- *   - I am not sure what 'dataonly' does. Does this parameter even do anything
- *     or has it been superseded by total=false? (Also on the subprofiles page
- *     it mentions "profiles".)
- * - https://www.copernica.com/en/documentation/restv2/rest-put-profile-subprofiles
- *   documents things wrongly; its info is from PUT profile/fields. It should
- *   take https://www.copernica.com/en/documentation/restv2/rest-put-database-profiles
- *   as an example. (Copypaste and change for "subprofiles".)
- * - @TODO figure out whether https://www.copernica.com/en/documentation/restv2/rest-put-profile-subprofiles
- *   has a mandatory collection ID. Work that into the previous point.
- * - If GET and POST (and maybe PUT) profile suprofiles get an extra $id on
- *   the overview page (profile/$id/subprofiles/$id), this would clarify the
- *   fact that this second ID is also mandatory, and make its exact use (and
- *   the exact distinction with collection/$id/subprofiles) easier to grasp, on
- *   the overview page itself.
- * - A suggestion: maybe in the "Available parameters" section of
- *   https://www.copernica.com/en/documentation/restv2/rest-get-collection-subprofiles
- *   it is a good idea to explicitly say that we can't filter on a specific
- *   profile but we have a specific call for this:
- *   https://www.copernica.com/en/documentation/restv2/rest-get-profile-subprofiles
- *   (If it's easy enough to link to the latter from the former page.)
- * Also: likely behavior bug:
- * - updating a deleted profile is possible and changes the 'modified' date.
- *   Even if you update it to the same values which the profile had before
- *   deletion (which is something that does happen with a non-deleted profile;
- *   an update to the same value does not change its 'modified' date.)
- * - Not sure if this counts as a bug, but: inserting a subprofile for a
- *   deleted profile is possible.
- */

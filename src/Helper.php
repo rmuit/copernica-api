@@ -247,7 +247,8 @@ class Helper
             } else {
                 // ...it's so unlikely that I don't care this doesn't really
                 // work as intended. It sanitizes things, but replaces multi=
-                // byte characters by multiple question marks
+                // byte characters by multiple question marks (and makes
+                // ApiBehaviorTest fail).
                 $value = preg_replace('/[\x00-\x1F\x80-\xFF]/', '?', $value);
             }
         } else {

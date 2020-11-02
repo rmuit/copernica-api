@@ -44,6 +44,7 @@ class RestClientTest extends TestCase
      */
     public function testApiExceptionsDefault($class_method, $url, $error_code, $expected_message, $suppress = null)
     {
+        $this->expectException(\RuntimeException::class);
         $this->expectExceptionMessage($expected_message);
         $this->expectExceptionCode($error_code);
         // For put(), the second argument is somehow mandatory (because it is
@@ -276,6 +277,40 @@ class RestClientTest extends TestCase
 
         $run_tests('get', '_simulate_strange_response/non-array', RestClient::GET_RETURNS_NON_ARRAY, 'This is not a json decoded body.');
     }
+
+    /**
+     * Test the checks that getEntities() does.
+     *
+     * getEntities() itself doesn't have any real testable code.
+     *
+     * Strictly speaking, this isn't complete yet; it verifies that some things
+     * don't cause errors, but doesn't verify that some things do cause errors.
+     */
+    public function testCheckEntitiesMetadata()
+    {
+        // Create some entities.
+        $api = new TestApi([
+            'Test' => [
+                'fields' => [
+                    'Email' => ['type' => 'email'],
+                ],
+            ]
+        ]);
+        $database_id = $api->getMemberId('Test');
+        $api->post("database/$database_id/profiles", ['Email' => 'me@example.com']);
+        $api->post("database/$database_id/profiles", ['Email' => 'me@example.com']);
+        $api->post("database/$database_id/profiles", ['Email' => 'me@example.com']);
+
+        $client = new TestRestClient($api);
+        // We've tested the returned metadata for the following queries in
+        // ApiBehaviorTest; here, we only care that the checks don't cause
+        // errors.
+        $entities = $client->getEntities("database/$database_id/profiles", ['start' => -2]);
+        $this->assertSame(0, count($entities));
+        $entities = $client->getEntities("database/$database_id/profiles", ['limit' => -2]);
+        $this->assertSame(0, count($entities));
+    }
+
 
     /**
      * Gets client class.
