@@ -1381,14 +1381,6 @@ class TestApi
      */
     protected function getProfiles($database_id, array $parameters)
     {
-        // The official docs for database/X/profiles and
-        // collection|profile/X/subprofiles about a 'dataonly' parameter. This
-        // doesn't unwrap the 'data', and still returns 'total', so if it does
-        // anything, I don't know what.
-        if (!empty($parameters['dataonly'])) {
-            throw new LogicException("TestApi does not implement 'dataonly' parameter yet.");
-        }
-
         $this->normalizeEntitiesParameters($parameters);
         $data = [];
         $where = '';
@@ -1410,18 +1402,29 @@ class TestApi
                     $modified = $row['_modified'];
                     $secret = $row['_secret'];
                     unset($row['_pid'], $row['_secret'], $row['_created'], $row['_modified'], $row['_removed']);
-                    $data[] = [
-                        'ID' => (string)$id,
-                        'fields' => array_map('strval', $row),
-                        // We don't support interests yet. @todo
-                        'interests' => [],
-                        'database' => (string)$database_id,
-                        'secret' => $secret,
-                        'created' => $created,
-                        'modified' => $modified,
-                        // 'removed' is always false in entities that are in lists.
-                        'removed' => false,
-                    ];
+                    if (empty($parameters['dataonly'])) {
+                        $data[] = [
+                            'ID' => (string)$id,
+                            'fields' => array_map('strval', $row),
+                            // We don't support interests yet. @todo
+                            'interests' => [],
+                            'database' => (string)$database_id,
+                            'secret' => $secret,
+                            'created' => $created,
+                            'modified' => $modified,
+                            // 'removed' is always false in entities that are in lists.
+                            'removed' => false,
+                        ];
+                    } else {
+                        $data[] = [
+                            'ID' => (string)$id,
+                            'fields' => array_map('strval', $row),
+                            // We don't support interests yet. @todo
+                            'interests' => [],
+                            'secret' => $secret,
+                            'modified' => $modified,
+                        ];
+                    }
                 }
             }
         }
@@ -1454,11 +1457,6 @@ class TestApi
      */
     protected function getSubprofiles($collection_id, array $parameters)
     {
-        // @todo see getProfiles()
-        if (!empty($parameters['dataonly'])) {
-            throw new LogicException("TestApi does not implement 'dataonly' parameter yet.");
-        }
-
         $this->normalizeEntitiesParameters($parameters);
         $data = [];
         $where = '';
@@ -1480,16 +1478,27 @@ class TestApi
                 $modified = $row['_modified'];
                 $secret = $row['_secret'];
                 unset($row['_spid'], $row['_pid'], $row['_secret'], $row['_created'], $row['_modified'], $row['_removed']);
-                $data[] = [
-                    'ID' => (string)$id,
-                    'secret' => $secret,
-                    'fields' => array_map('strval', $row),
-                    'profile' => (string)$profile_id,
-                    'collection' => (string)$collection_id,
-                    'created' => $created,
-                    'modified' => $modified,
-                    'removed' => false,
-                ];
+                if (empty($parameters['dataonly'])) {
+                    $data[] = [
+                        'ID' => (string)$id,
+                        'secret' => $secret,
+                        'fields' => array_map('strval', $row),
+                        'profile' => (string)$profile_id,
+                        'collection' => (string)$collection_id,
+                        'created' => $created,
+                        'modified' => $modified,
+                        'removed' => false,
+                    ];
+                } else {
+                    $data[] = [
+                        'ID' => (string)$id,
+                        'secret' => $secret,
+                        'fields' => array_map('strval', $row),
+                        'profile' => (string)$profile_id,
+                        'collection' => (string)$collection_id,
+                        'modified' => $modified,
+                    ];
+                }
             }
         }
         $response = [
@@ -1844,11 +1853,11 @@ class TestApi
     /**
      * Generates a normalized set of parameters for 'entities' requests.
      *
-     * start / limit / total are always guaranteed to be set afterwards; start
-     * / limit are integers and total boolean. Note start / limit can be
-     * passed back to the caller as-is but we may not be able to just pass it
-     * into the SQL query as-is. We likely are better off not querying anything
-     * if start < 0 or limit <= 0.
+     * start / limit / total / dataonly are always guaranteed to be set
+     * afterwards; start / limit are integers and total / dataonly boolean.
+     * Note start / limit can be passed back to the caller as-is but we may not
+     * be able to just pass it into the SQL query as-is. We likely are better
+     * off not querying anything if start < 0 or limit <= 0.
      *
      * Note our checks are likely a bit different from the real API, in order
      * to have the exact same effect - because the real API works through URL
@@ -1883,23 +1892,10 @@ class TestApi
             $parameters['start'] = (int) $parameters['start'];
         }
 
-        // Type coercion for the 'total' argument: all arrays (including empty)
-        // evaluate to true; all abs(number) < 1 evaluate to false; all other
-        // strings except "true" (case insensitive) evaluate to false;. (This
-        // is not equivalent to any type coercions in normalizeInputValue().)
-        if (!isset($parameters['total'])) {
-            $parameters['total'] = true;
-        } elseif (!is_bool($parameters['total'])) {
-            if (!is_scalar($parameters['total'])) {
-                // All arrays, no others (because rawurlencode() encodes
-                // objects to empty string).
-                $parameters['total'] = is_array($parameters['total']);
-            } elseif (is_string($parameters['total']) && !is_numeric($parameters['total'])) {
-                $parameters['total'] = in_array(strtolower($parameters['total']), ['yes', 'true'], true);
-            } else {
-                $parameters['total'] = abs($parameters['total']) >= 1;
-            }
-        }
+        $parameters['total'] = !isset($parameters['total']) || $this->isBooleanTrue($parameters['total']);
+        // @todo actually test (and encode in a test) whether 'dataonly'
+        //   behaves the same, for non-obvious values. We haven't tested yet.
+        $parameters['dataonly'] = isset($parameters['dataonly']) && $this->isBooleanTrue($parameters['dataonly']);
     }
 
     /**
@@ -2248,7 +2244,7 @@ class TestApi
     /**
      * Strips nonexistent fields and normalizes the values as the API does.
      *
-    * @param array $input
+     * @param array $input
      *   Input values for field-value pairs.
      * @param int $id
      *   Database ID or collection ID
@@ -2279,6 +2275,40 @@ class TestApi
         }
 
         return $normalized;
+    }
+
+    /**
+     * Indicates whether a value converts to True by Copernica.
+     *
+     * This logic would likely be part of Helper::normalizeInputValue() if
+     * there was a boolean field. It's used for 'boolean' query parameters and
+     * has only been tested for values of the 'total' parameter so far; if it
+     * starts being used more widely (for parameters which have documented
+     * tests), this can likely be be retired and instead, we can make
+     * Helper::isBooleanTrue() public.
+     *
+     * @param mixed $value
+     *   A value
+     *
+     * @return bool
+     *   Indicates whether a value converts to True.
+     */
+    private function isBooleanTrue($value)
+    {
+        if (!is_bool($value)) {
+            if (is_string($value) && !is_numeric($value)) {
+                // Leading/trailing spaces 'falsify' the outcome.
+                $value = in_array(strtolower($value), ['yes', 'true'], true);
+            } elseif (is_scalar($value)) {
+                $value = abs($value) >= 1;
+            } else {
+                // All arrays, no others (because rawurlencode() encodes
+                // objects to empty string).
+                $value = is_array($value);
+            }
+        }
+
+        return $value;
     }
 
     /**
@@ -2705,9 +2735,9 @@ class TestApi
         // Kind-of arbitrary: as per normalizeDatabasesStructure(), we assume
         // the entities can have alphanumeric keys in our case. So we'll only
         // unwrap if we find exactly the expected properties in metadata.
-        // (We're not checking 'count' as that is not always there and we don't
+        // (We're not checking 'total' as that is not always there and we don't
         // want to do more detailed logic.)
-        if (isset($structure['start']) && isset($structure['limit']) && isset($structure['total']) && isset($structure['data'])) {
+        if (isset($structure['start']) && isset($structure['limit']) && isset($structure['count']) && isset($structure['data'])) {
             $structure = $structure['data'];
         }
     }

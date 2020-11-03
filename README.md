@@ -15,51 +15,75 @@ CopernicaRestAPI does not exist.
 
 RestClient contains get() / post() / put() and delete() calls (just like the
 standard CopernicaRestAPI); it also contains two extra calls getEntity() and
-getEntities() which do some extra checks and are guaranteed to return an
-'entity' or 'list of entities' instead. (An 'entity' is something like a
-profile / subprofile / emailing / database; likely anything that has an ID
-value.) It is hopefully self evident which of the three 'get' methods
-can best be used, based on the API endpoint.
+getEntities() which do some extra checks and are guaranteed to return a valid
+'entity' or 'list of entities'. (An 'entity' is something like a profile /
+subprofile / emailing / database; likely anything that has an ID value.) It is
+hopefully self-evident which of the three 'get' methods can best be used, based
+on the API endpoint.
 ```php
 use CopernicaApi\Helper;
 use CopernicaApi\RestClient;
 
 $client = new RestClient(TOKEN);
 
-$new_id = $client->post("database/$db_id/profiles", ['fields' => ['email' => 'rm@wyz.biz']]);
+// Create a new profile.
+$id = $client->post("database/$db_id/profiles", ['fields' => ['email' => 'rm@wyz.biz']]);
 
+// Update a single existing profile (or multiple, in the second example).
 // put() often returns a location string for the updated entity, which often
 // isn't very useful because it's the same as the first argument - e.g. in this
-// case it always returns "profile/$new_id":
-$client->put("profile/$new_id", ['fields' => ['email' => 'info@wyz.biz']]);
+// case it always returns "profile/$id":
+$client->put("profile/$id", ['fields' => ['email' => 'info@wyz.biz']]);
 // ...but there are resources which can create new entities, e.g. the following
 // call will update all profiles matching the company name and return true, but
 // if zero profiles match then it will create a new profile and return its
 // location:
 $return = $client->put(
-  "profile/$new_id",
+  "database/$db_id/profiles",
   ['fields' => ['email' => 'info@wyz.biz', 'company' => 'Wyz']],
   ['fields' => ['company==Wyz'], 'create' => true]);
 if ($return !== true) {
+    // (This is an odd way of having to extract the new ID, and requires you to
+    // know how many parts the URL has - but it's compatible with the other
+    // 'put' calls and allows the library to better handle any future behavior
+    // changes.)
     list($unimportant__always_profile, $created_id) = explode('/', $return);
 }
 
 // Get non-entity data (i.e. data that has no 'id' property).
-$stats = $client->get("publisher/emailing/$id/statistics");
+$stats = $client->get("publisher/emailing/$mailing_id/statistics");
 
 // Get a single entity; throw an exception if it was removed earlier:
 $profile = $client->getEntity("profile/$id");
 // If we want to also have entity data returned (with all fields being empty
-// strings) if the entity was 'removed' from Copernica:
+// strings) if the entity was 'removed' from Copernica, we can pass an argument
+// to suppress that specific error. (There's practically no difference between
+// the below and just calling get() instead.)
 $profile = $client->getEntity("profile/$id", [], RestClient::GET_ENTITY_IS_REMOVED);
 
 // Get a list of entities; this will return only the relevant 'data' part from
 // the response. (If we want to have the full structure including start / count
-// / etc, we can use get().)
+// / etc, we can use get().) There's a limit to the returned number of entities.
 $profiles = $client->getEntities("database/$db_id/profiles");
-// The returned list has a zero-based index. If we want to access the mailings
+// Setting 'dataonly = true' on getEntities() calls for profiles or subprofiles
+// can make the calls faster. It omits some property values from the individual
+// (sub)profiles that are likely not needed anyway; see the method comments.
+$profiles = $client->getEntities("database/$db_id/profiles", ['dataonly' => true]);
+// The returned list has a zero-based index. If we want to access the profiles
 // by ID, here's a quick helper method.
 $mailings = Helper::rekeyEntities($profiles, 'ID');
+
+// Delete a single entity; throw an exception if it was already removed/deleted
+// earlier:
+$profile = $client->delete("profile/$id");
+// If we want to suppress the exception and just return true after re-deleting
+// an entity:
+$profile = $client->delete("profile/$id", RestClient::DELETE_RETURNS_ALREADY_REMOVED);
+// To always suppress particular exceptions without having to pass it to
+// every get() / delete() call, call e.g.:
+$client->suppressApiCallErrors(RestClient::DELETE_RETURNS_ALREADY_REMOVED);
+// There's a bunch of constants for suppressing other exceptions, but only the
+// two mentioned here are likely to ever be needed.
 ```
 
 Large sets of entities (larger than the limit which the API allows in one
@@ -74,7 +98,7 @@ by getMoreEntities() if things don't work.)
 use CopernicaApi\BatchableRestClient;
 
 $client = new BatchableRestClient(TOKEN);
-$profiles = $client->getEntities("database/$db_id/profiles", ['orderby' => 'modified', 'fields' => ['modified>=2020-01-01']]);
+$profiles = $client->getEntities("database/$db_id/profiles", ['orderby' => 'modified', 'fields' => ['modified>=2020-01-01'], 'dataonly' => true]);
 
 // It is possible to pause execution and fetch the next batch in a separate
 // PHP thread, with some extra work; check getState() for this.
@@ -118,20 +142,16 @@ Things to know:
   body returned in the HTTP response, so the caller can figure out what to do
   with it. get() calls return only the body.
 
-- Whether some responses are 'invalid', may depend on the specific application,
-  like:
-  - By default an exception is thrown if a single entity is queried (e.g.
-    `getEntity("profile/$id")`) which was deleted earlier. However, the API
-    actually returns an entity with the correct ID, all fields empty, and a
-    'removed' property with a date value. If this empty entity should be
-    returned without throwing an exception: see above example code.
-  - By default an exception is thrown if we try to re-delete an entity which
-    was deleted earlier. This exception can be suppressed by passing
-    RestClient::DELETE_RETURNS_ALREADY_REMOVED to the second argument of
-    `delete()` or setting it using `suppressApiCallErrors()`. In this case, the
-    `delete()` call will return the full headers and body (including the JSON
-    encoded error message). This return value can be ignored, and the fact that
-    the call returns normally can be treated as 'success'.
+- Whether some responses are 'invalid', may depend on the specific application.
+  E.g. an exception is thrown by default
+  - if a single entity is queried (e.g. `getEntity("profile/$id")`) which was
+    deleted earlier. However, the API actually returns an entity with the
+    correct ID, all fields empty, and a 'removed' property with a date value.
+    If this empty entity should be returned without throwing an exception:
+    see above example code.
+  - if we try to re-delete an entity which was deleted earlier. Also see above
+    example code. In that case the return value from delete() can be ignored,
+    and the fact that the call returns normally can be treated as 'success'.
 
 - Some API endpoints behave in unknown ways. RestClient throws exceptions by
   default for unknown behavior; the intention is to never return a value to the

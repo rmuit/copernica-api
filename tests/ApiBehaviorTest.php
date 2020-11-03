@@ -540,6 +540,7 @@ class ApiBehaviorTest extends TestCase
         //   'start', 'limit' (at least the strange values) too. Still test
         //   boolean values with 'order'?
         //   (TestApi::getSqlOrderByFromParameters() suggests they are all ASC.)
+        // @todo and at the same time, make tests for dataonly=true.
         $result = $api->get("database/$database_id/profiles/$profile_id", ['fields' => false, 2 => 4, 'bogus' => 345, 'total' => 'TRue']);
         $this->assertSame($expected_profiles, $result);
         $result = $api->get("database/$database_id/profiles/bogus/path", ['fields' => 'nothing', 'total' => []]);

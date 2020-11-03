@@ -166,6 +166,9 @@ class BatchableRestClient extends RestClient
      * counters, needed by getMoreEntities() / getMoreEntitiesOrdered(). The
      * other methods will throw an exception if this method isn't called first.
      *
+     * As with the parent: it is recommended to set $parameters['dataonly']
+     * to true for profiles / subprofiles.
+     *
      * @param string $resource
      *   Resource (URI relative to the versioned API) to fetch data from.
      * @param array $parameters
@@ -301,8 +304,8 @@ class BatchableRestClient extends RestClient
      *
      * @param array $extra_parameters
      *   (Optional) parameters to override those passed to the original
-     *   getEntities() call. At this moment only 'limit' is supported; others
-     *   will cause an exception.
+     *   getEntities() call. At this moment only 'limit' / 'dataonly' are
+     *   supported; others will cause an exception.
      * @return array[]|false
      *   The 'data' part of the JSON-decoded response body, i.e. an array of
      *   entities - or empty array if no more entities are left to return as
@@ -317,9 +320,14 @@ class BatchableRestClient extends RestClient
             return [];
         }
 
-        $extra_parameters = array_change_key_case($extra_parameters);
-        if ($extra_parameters && (!isset($extra_parameters['limit']) || count($extra_parameters) > 1)) {
-            throw new InvalidArgumentException('Invalid parameters passed.');
+        if ($extra_parameters) {
+            $extra_parameters = array_change_key_case($extra_parameters);
+            if (
+                count($extra_parameters) > ((isset($extra_parameters['limit']) ? 1 : 0)
+                    + (isset($extra_parameters['dataonly']) ? 1 : 0))
+            ) {
+                throw new InvalidArgumentException('Invalid parameters passed.');
+            }
         }
 
         // If this returns an empty array, that's because we could not see
@@ -416,9 +424,14 @@ class BatchableRestClient extends RestClient
             throw new LogicException('lastCallParameters class property is not an array; this is indicative of a bug.');
         }
 
-        $extra_parameters = array_change_key_case($extra_parameters);
-        if ($extra_parameters && (!isset($extra_parameters['limit']) || count($extra_parameters) > 1)) {
-            throw new InvalidArgumentException('Invalid parameters passed.');
+        if ($extra_parameters) {
+            $extra_parameters = array_change_key_case($extra_parameters);
+            if (
+                count($extra_parameters) > ((isset($extra_parameters['limit']) ? 1 : 0)
+                    + (isset($extra_parameters['dataonly']) ? 1 : 0))
+            ) {
+                throw new InvalidArgumentException('Invalid parameters passed.');
+            }
         }
 
         // This supposedly doesn't throw a RuntimeException because it already

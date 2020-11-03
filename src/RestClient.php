@@ -527,16 +527,10 @@ class RestClient
         }
 
         // https://www.copernica.com/en/documentation/restv2/rest-requests
-        // mentions:
-        // - A "X-deleted" header. This is indeed present on responses (which
-        //   return HTTP code 200) for just-deleted items, and has content
-        //   "ENTITY-TYPE ID" in the case we've checked. I'm not sure this adds
-        //   any information (i.e. would ever not be equivalent to $resource).
-        // - A "204 No Content" response in case the data that was meant to be
-        //   deleted could not be located. I'm not aware of when this would
-        //   apply: trying to delete an already-deleted (or nonexistent)
-        //   profile results in a HTTP 400 response. So either this happens
-        //   only for specific entities, or it's a remnant of v1 documentation.
+        // mentions a "X-deleted" header. This is indeed present on responses
+        // (which return HTTP code 200) for just-deleted items, and has content
+        // "ENTITY-TYPE ID" in the case we've checked. I'm not sure this adds
+        // any information (i.e. would ever not be equivalent to $resource).
         return $result;
     }
 
@@ -699,6 +693,16 @@ class RestClient
      * This method checks if the returned response contains a valid structure
      * for a set of entities, and if each individual entity is also valid (has
      * an ID value).
+     *
+     * It is recommended to pass $parameters['dataonly'] = true along with
+     * requests for (sub)profiles, to leave out some properties if you don't
+     * need them; this can speed up the queries. The properties left out are:
+     * - secret
+     * - created
+     * - removed (which is always false)
+     * - database (for profiles only. For subprofiles, this property does not
+     *   exist, and the 'profile' and 'collection' properties are not
+     *   influenced by the 'dataonly' parameter.)
      *
      * The bitmask set through suppressApiCallErrors() has no effect on this
      * method because it is explicitly meant to return a set of valid entities.

@@ -7,10 +7,9 @@ use CopernicaApi\RestClient;
 /**
  * RestClient which connects to TestApi.
  *
- * This just overrides the constructor to set the $api variable. It's
- * unfortunate that we have a separate test class to override each 'client'
- * class, but so far it's still simpler than having a factory class (we've
- * tried) and it's not worth making setApi a public method... yet?
+ * This just overrides the constructor to set the $api variable. We should just
+ * remove this file and instantiate an anonymous class instead, for tests.
+ * Example is in the tests in extra/.
  */
 class TestRestClient extends RestClient
 {

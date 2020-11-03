@@ -126,11 +126,16 @@ class BatchableRestClientTest extends TestCase
         // Changing 'limit' parameter in between also works, and sticks.
         $entities = $client->getEntities("database/$database_id/profiles", ['limit' => 3]);
         $this->assertSame(3, count($entities));
-        $entities = $client->getMoreEntities(['limit' => 2]);
+        $entities = $client->getMoreEntities(['limit' => 2, 'dataonly' => true]);
         $this->assertSame(2, count($entities));
+        // Quick check to see that 'dataonly' has effect. There's no special
+        // logic in BatchableRestClient special to 'dataonly', so further
+        // tests should be in the base ApiBehaviorTest.
         $this->assertSame(false, $client->allEntitiesFetched());
         $entities = $client->getMoreEntities();
         $this->assertSame(2, count($entities));
+        // Test that the extra parameters stuck in the next call..
+        $this->assertFalse(isset($entities[0]['created']));
         // This still (falsely) returns false because we don't know yet that we
         // got exactly the last 2 items in the set. (Because we've passed
         // total==false to the API calls to offload the API.)
@@ -149,7 +154,9 @@ class BatchableRestClientTest extends TestCase
         // getMoreEntitiesOrdered() isn't able to support limit=1 because it
         // will throw an "All entities in the previous batch had the same value"
         // exception.
-        $client->getEntities("database/$database_id/profiles", ['limit' => 1]);
+        $entities = $client->getEntities("database/$database_id/profiles", ['limit' => 1]);
+        // New query resets the $extra_parameters from previous query.
+        $this->assertTrue(isset($entities[0]['created']));
         $client->getMoreEntities();
         $client->getMoreEntities();
         $client->getMoreEntities();
