@@ -1211,3 +1211,14 @@ class ApiBehaviorTest extends TestCase
         return 99984;
     }
 }
+/* The following behavior has been reported to Copernica, so they may get fixed,
+ * in which case any tests that assume the behavior should be changed:
+ * - updating a deleted profile is possible and changes the 'modified' date.
+ *   Even if you update it to the same values which the profile had before
+ *   deletion (which is something that does happen with a non-deleted profile;
+ *   an update to the same value does not change its 'modified' date.)
+ * - Not sure if this counts as a bug, but: inserting a subprofile for a
+ *   deleted profile is possible.
+ * - PUT profile/$id/subprofiles/$id returns no 'X-Created' header (and no correct canonical location)
+ *   if a new subprofile was created. Also, please let the people in GITHUB-PR know if 'async' is implemented for this call.
+ */

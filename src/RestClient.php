@@ -555,18 +555,6 @@ class RestClient
      */
     public function get($resource, array $parameters = [], $suppress_errors = null)
     {
-        // API NOTES: (strange location, may need to move to README)
-        // - Curl occasionally returns error 7 "Failed to connect" (and
-        //   getApi()->get() returns a string value, I assume empty string).
-        // - ~Jun 2020: We've seen error 52 "Empty reply from server" - for a
-        //   'subprofiles' query for a 'large' collection. This suggests
-        //   timeout-like conditions are possible on the server end, which
-        //   ideally should return a 4xx/5xx HTTP code instead of 'empty'.
-        // - ~Oct 2020: We've seen HTTP 503 (Service Unavailable) returning a
-        //   HTML body with title "Loadbalancer Error" and a header mentioning
-        //   "too many requests to handle".
-        // - ~Oct 2020: We've also seen HTTP 504 (gateway timeout) returning
-        //   the same HTML body. This may or may not be replacing the Curl 52?
         if (!isset($suppress_errors)) {
             $suppress_errors = $this->suppressApiCallErrors;
         }

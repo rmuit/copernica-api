@@ -172,6 +172,31 @@ Any time you hit an exception that you need to work around (by e.g. fiddling
 with these constants), but you think actually the class should handle this
 better: feel free to file a bug report.
 
+### Temporary network errors
+
+For some software projects, it is relevant to know which errors can be
+classified as temporary. (E.g. those that terminate a process on unexpected
+errors and only want to continue / repeat their actions when specific
+'known to be temporary' errors are encountered. Another strategy that could
+work, but might be dangerous, is to only regard HTTP 400 response codes as
+permanent, and regard everything else a temporary error.)
+
+Copernica's network is quite stable but hiccups and temporary outages can
+always occur. The following network errors have been observed:
+
+- Curl occasionally returns error 7 "Failed to connect". Once, we've seen error 35
+  "OpenSSL SSL_connect: SSL_ERROR_SYSCALL in connection to api.copernica.com:443".
+  These can likely always be regarded as temporary errors.
+- Copernica occasionally returns HTTP response codes 503 (Service Unavailable)
+  and 504 (gateway timeout), along with a HTML body with title "Loadbalancer
+  Error" and a header mentioning "too many requests to handle". These typically
+  last a few minutes maximum.
+- ~Jun 2020 we've observed Curl error 52 "Empty reply from server" for a GET
+  query that would return a large result set. We don't have enough information
+  to know if such an error would always be temporary. (It's also possible that
+  this specific circumstance has in the meantime been replaced by returning
+  a HTTP 504 response.)
+
 ## Some more details
 
 Below text is likely unimportant to most people (who just want to use a REST
