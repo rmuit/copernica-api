@@ -179,23 +179,36 @@ classified as temporary. (E.g. those that terminate a process on unexpected
 errors and only want to continue / repeat their actions when specific
 'known to be temporary' errors are encountered. Another strategy that could
 work, but might be dangerous, is to only regard HTTP 400 response codes as
-permanent, and regard everything else a temporary error.)
+permanent, and regard everything else a temporary error - at the risk of a
+process getting stuck retrying.)
 
-Copernica's network is quite stable but hiccups and temporary outages can
-always occur. The following network errors have been observed:
+Copernica's service infrastructure is quite stable but hiccups and temporary
+outages can occur everywhere. This is a semi live document of errors observed:
 
-- Curl occasionally returns error 7 "Failed to connect". Once, we've seen error 35
-  "OpenSSL SSL_connect: SSL_ERROR_SYSCALL in connection to api.copernica.com:443".
-  These can likely always be regarded as temporary errors.
+Temporary:
+- Curl occasionally returns error 7 "Failed to connect". The nature and 
+  frequency (relatively high compared to the rest) may make it necessary to
+  treat this as a temporary error.
 - Copernica occasionally returns HTTP response codes 503 (Service Unavailable)
   and 504 (gateway timeout), along with a HTML body with title "Loadbalancer
   Error" and a header mentioning "too many requests to handle". These typically
   last a few minutes maximum.
+
+Not sure:
+- Once, we've seen error 35
+  "OpenSSL SSL_connect: SSL_ERROR_SYSCALL in connection to api.copernica.com:443".
+  While this was a temporary error, this is not the only kind of SSL error that
+  could return Curl error 35 - so I'm personally still hesitant thinking of
+  this as "always temporary" until there's more of a need to.
 - ~Jun 2020 we've observed Curl error 52 "Empty reply from server" for a GET
   query that would return a large result set. We don't have enough information
   to know if such an error would always be temporary. (It's also possible that
   this specific circumstance has in the meantime been replaced by returning
   a HTTP 504 response.)
+- Once, we've seen a HTTP response code 502, along with a HTML body with title
+  "502 Server Error". It was apparently a very temporary internal hiccup, but
+  a 502 should probably not be treated as something that lasts only a short
+  time (unless this starts happening more often).
 
 ## Some more details
 
