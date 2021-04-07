@@ -186,9 +186,10 @@ Copernica's service infrastructure is quite stable but hiccups and temporary
 outages can occur everywhere. This is a semi live document of errors observed:
 
 Temporary:
-- Curl occasionally returns error 7 "Failed to connect". The nature and 
+- Curl occasionally returns error 7 "Failed to connect". The nature and
   frequency (relatively high compared to the rest) may make it necessary to
-  treat this as a temporary error.
+  treat this as a temporary error. This is typically not a hiccup on a single
+  connection, but a service issue that lasts for a few minutes.
 - Copernica occasionally returns HTTP response codes 503 (Service Unavailable)
   and 504 (gateway timeout), along with a HTML body with title "Loadbalancer
   Error" and a header mentioning "too many requests to handle". These typically

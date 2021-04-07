@@ -9,7 +9,7 @@ use RuntimeException;
 use UnexpectedValueException;
 
 /**
- * Static utility method(s) for code that deals with Copernica
+ * Static utility method(s) for code that deals with Copernica.
  */
 class Helper
 {
@@ -19,7 +19,7 @@ class Helper
      * The fact that this is a constant is representative of the fact that I
      * have no clue whether this is configurable per Copernica environment.
      * Once we know, we can decide whether this should be an argument to below
-     * method or e.g. a public static variable with a setter
+     * method or e.g. a public static variable with a setter.
      */
     const TIMEZONE_DEFAULT = 'Europe/Amsterdam';
 
@@ -69,7 +69,7 @@ class Helper
         }
         switch ((string)$field_struct['type']) {
             // Email field is not checked for valid e-mail. (The UI does that,
-            // the REST API doesn't.)
+            // the REST API doesn't.) Also, Copernica does not trim spaces.
             case 'email':
             case 'text':
                 if (is_scalar($value)) {
