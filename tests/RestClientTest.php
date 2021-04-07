@@ -301,7 +301,7 @@ class RestClientTest extends TestCase
         $api->post("database/$database_id/profiles", ['Email' => 'me@example.com']);
         $api->post("database/$database_id/profiles", ['Email' => 'me@example.com']);
 
-        $client = new TestRestClient($api);
+        $client = $this->getClientForInitializedApi($api);
         // We've tested the returned metadata for the following queries in
         // ApiBehaviorTest; here, we only care that the checks don't cause
         // errors.
@@ -313,7 +313,7 @@ class RestClientTest extends TestCase
 
 
     /**
-     * Gets client class.
+     * Constructs client class.
      *
      * @param int|null $suppress_exceptions_default
      *   Which exceptions to suppress by default for this client.
@@ -325,7 +325,7 @@ class RestClientTest extends TestCase
     protected function getClient($suppress_exceptions_default = null, $hack_api_for_invalid_token = false)
     {
         $api = new TestApi();
-        $client = new TestRestClient($api);
+        $client = $this->getClientForInitializedApi($api);
 
         if (isset($suppress_exceptions_default)) {
             $client->suppressApiCallErrors($suppress_exceptions_default);
@@ -333,5 +333,25 @@ class RestClientTest extends TestCase
         $api->invalidToken = $hack_api_for_invalid_token;
 
         return $client;
+    }
+
+    /**
+     * Constructs test REST client.
+     *
+     * @param \CopernicaApi\Tests\TestApi $api
+     *   Test API instance.
+     *
+     * @return \CopernicaApi\RestClient
+     *   REST client, with
+     */
+    protected function getClientForInitializedApi(TestApi $api)
+    {
+        return new class ($api) extends RestClient {
+            public function __construct(TestApi $api)
+            {
+                parent::__construct('testtoken');
+                parent::setApi($api);
+            }
+        };
     }
 }

@@ -59,7 +59,7 @@ class BatchableRestClientTest extends TestCase
      */
     public function testAllEntitiesFetchedDefault()
     {
-        $client = $this->getClient(true);
+        $client = $this->getClient();
         $this->assertSame(false, $client->allEntitiesFetched());
     }
 
@@ -74,7 +74,7 @@ class BatchableRestClientTest extends TestCase
         // endpoint.
         $this->expectException(RuntimeException::class);
         $this->expectExceptionMessage('Copernica API request failed: Invalid method.');
-        $this->getClient(true)->getMoreEntities();
+        $this->getClient()->getMoreEntities();
     }
 
     /**
@@ -87,7 +87,7 @@ class BatchableRestClientTest extends TestCase
         // This calls its internal getContext() which throws an exception.
         $this->expectException(RuntimeException::class);
         $this->expectExceptionMessage("The current API resource/query/configuration is not suitable for querying entities in an 'ordered' way.");
-        $this->getClient(true)->getMoreEntitiesOrdered();
+        $this->getClient()->getMoreEntitiesOrdered();
     }
 
     /**
@@ -96,7 +96,7 @@ class BatchableRestClientTest extends TestCase
     public function testGetMoreEntities()
     {
         $database_id = self::DATABASE_ID;
-        $client = $this->getClient();
+        $client = $this->getClient(true);
         $client->post("database/$database_id/profiles", ['fields' => ['Email' => '1@c.cc', 'Birthdate' => '2000-01-07']]);
         $client->post("database/$database_id/profiles", ['fields' => ['Email' => '2@c.cc', 'Birthdate' => '2000-01-06']]);
         $client->post("database/$database_id/profiles", ['fields' => ['Email' => '3@c.cc', 'Birthdate' => '2000-01-05']]);
@@ -186,7 +186,7 @@ class BatchableRestClientTest extends TestCase
     public function testGetMoreEntitiesOrdered()
     {
         $database_id = self::DATABASE_ID;
-        $client = $this->getClient();
+        $client = $this->getClient(true);
         $client->post("database/$database_id/profiles", ['fields' => ['Email' => '1@c.cc', 'Birthdate' => '2000-01-07']]);
         $client->post("database/$database_id/profiles", ['fields' => ['Email' => '2@c.cc', 'Birthdate' => '2000-01-06']]);
         $client->post("database/$database_id/profiles", ['fields' => ['Email' => '3@c.cc', 'Birthdate' => '2000-01-05']]);
@@ -315,7 +315,7 @@ class BatchableRestClientTest extends TestCase
     public function testGetMoreEntitiesOrderedEqualValues()
     {
         $database_id = self::DATABASE_ID;
-        $client = $this->getClient();
+        $client = $this->getClient(true);
         $client->post("database/$database_id/profiles", ['fields' => ['Email' => '1@c.cc', 'Birthdate' => '2000-01-01']]);
         $client->post("database/$database_id/profiles", ['fields' => ['Email' => '2@c.cc', 'Birthdate' => '2000-01-01']]);
         $client->post("database/$database_id/profiles", ['fields' => ['Email' => '2@c.cc', 'Birthdate' => '2000-01-05']]);
@@ -364,9 +364,9 @@ class BatchableRestClientTest extends TestCase
         // separate batches, to prove that e.g. we could do that over
         // separate HTTP requests. However the API backend must stay the same;
         // that is not our issue.
-        $api = $this->getApi();
+        $api = $this->getApiWithInitializedProfile();
 
-        $client = new TestBatchableRestClient($api);
+        $client = $this->getClient($api);
         $database_id = self::DATABASE_ID;
         $client->post("database/$database_id/profiles", ['fields' => ['Email' => '1@c.cc', 'Birthdate' => '2000-01-07']]);
         $client->post("database/$database_id/profiles", ['fields' => ['Email' => '2@c.cc', 'Birthdate' => '2000-01-06']]);
@@ -381,7 +381,7 @@ class BatchableRestClientTest extends TestCase
         $state = $client->getState();
         // We could be doing this much later, with a previously saved state;
         // getMoreEntitiesOrdered() still works:
-        $client = new TestBatchableRestClient($api);
+        $client = $this->getClient($api);
         $client->setState($state);
         $entities = $client->getMoreEntitiesOrdered();
         $this->assertSame(2, count($entities));
@@ -397,7 +397,7 @@ class BatchableRestClientTest extends TestCase
         // are not using tokens in test classes.)
         $client->getEntities("database/$database_id/profiles", ['limit' => 3]);
         $state = $client->getState(false, false);
-        $client = new TestBatchableRestClient($api);
+        $client = $this->getClient($api);
         $client->setState($state);
         $entities = $client->getMoreEntities();
         $this->assertSame(3, count($entities));
@@ -411,7 +411,7 @@ class BatchableRestClientTest extends TestCase
         // info:
         $client->getEntities("database/$database_id/profiles", ['limit' => 3]);
         $state = $client->getState(false, false);
-        $client = new TestBatchableRestClient($api);
+        $client = $this->getClient($api);
         $client->setState($state);
         $this->expectException(LogicException::class);
         $this->expectExceptionMessage('datasetLastFetchedEntities class property does not have the expected structure');
@@ -419,43 +419,52 @@ class BatchableRestClientTest extends TestCase
     }
 
     /**
-     * Gets test API, by default with initialized profile tables.
-     *
-     * @param bool $no_table_initialization
+     * Gets test API with initialized profile tables.
      *
      * @return TestApi
      */
-    protected function getApi($no_table_initialization = false)
+    protected function getApiWithInitializedProfile()
     {
-        if ($no_table_initialization) {
-            // Don't waste time doing SQL commands for table creations etc; that's
-            // not what this test is for. So pass a bogus PDO connection.
-            $pdo = new PDO('sqlite::memory:');
-            $api = new TestApi([], $pdo);
-        } else {
-            $api = new TestApi([
-                self::DATABASE_ID => [
-                    'name' => 'Test',
-                    'fields' => [
-                        'Email' => ['type' => 'email'],
-                        'Birthdate' => ['type' => 'empty_date'],
-                    ],
-                ]
-            ]);
-        }
-
-        return $api;
+        return new TestApi([
+            self::DATABASE_ID => [
+                'name' => 'Test',
+                'fields' => [
+                    'Email' => ['type' => 'email'],
+                    'Birthdate' => ['type' => 'empty_date'],
+                ],
+            ]
+        ]);
     }
 
     /**
      * Gets BatchableRestClient (by default) having access to profile tables.
      *
-     * @param bool $no_table_initialization
+     * @param \CopernicaApi\Tests\TestApi|bool $api
+     *   If True, get new API with initialized profile tables. If False, get
+     *   'empty' new API.
      *
      * @return BatchableRestClient
      */
-    protected function getClient($no_table_initialization = false)
+    protected function getClient($api = false)
     {
-        return new TestBatchableRestClient($this->getApi($no_table_initialization));
+        if (!is_object($api)) {
+            if ($api) {
+                $api = $this->getApiWithInitializedProfile();
+            } else {
+                // Don't waste time doing SQL commands for table creations etc;
+                // that's not what this test is for. So pass a bogus PDO
+                // connection.
+                $pdo = new PDO('sqlite::memory:');
+                $api = new TestApi([], $pdo);
+            }
+        }
+
+        return new class ($api) extends BatchableRestClient {
+            public function __construct(TestApi $api)
+            {
+                parent::__construct('testtoken');
+                parent::setApi($api);
+            }
+        };
     }
 }

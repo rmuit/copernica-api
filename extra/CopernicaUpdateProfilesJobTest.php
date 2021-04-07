@@ -7,7 +7,8 @@
  * I'm using this in an application's test environment, but it's included here
  * as an example of functional tests that utilize TestApi. The real unit tests
  * (which don't use TestApi) of methods in the class under test are obviously
- * uninteresting if you don't have that class.
+ * uninteresting if you don't have that class. The functional tests start
+ * below getClient().
  *
  * The class under test (CopernicaUpdateProfilesJob) is not in this Github
  * repository yet. I'm on the fence about it because:
@@ -28,8 +29,8 @@
 
 use CopernicaApi\CopernicaRestAPI;
 use CopernicaApi\Helper;
+use CopernicaApi\RestClient;
 use CopernicaApi\Tests\TestApi;
-use CopernicaApi\Tests\TestRestClient;
 use PHPUnit\Framework\TestCase;
 
 // phpcs:disable
@@ -107,8 +108,8 @@ require_once(__DIR__ . '/../../../../modules/custom/ygsync/CopernicaSubprofileCo
 require_once(__DIR__ . '/SqliteKeyValueStoreManager.php');
 require_once(__DIR__ . '/PdoKeyValueStore.php');
 // Not always autoloaded on my test system:
+require_once(__DIR__ . '/../src/RestClient.php');
 require_once(__DIR__ . '/../tests/TestApi.php');
-require_once(__DIR__ . '/../tests/TestRestClient.php');
 
 // phpcs:enable
 
@@ -117,19 +118,22 @@ require_once(__DIR__ . '/../tests/TestRestClient.php');
  *
  * This implicitly depends on the profile functionality from Copernica being
  * fully known / specified / tested in copernica-api's ApiBehavorTest so we
- * have a stable base to build on.
+ * have a stable base (TestApi) to build on.
  *
- * Contains:
+ * Contains 4 types of tests:
  * - unit tests for several methods;
- * - a test of a method that is better off not being unit tested but being
- *   exercised by passing items through a job, i.e. calling processItem()
- *   repeatedly; this utilizes an API 'backend', for which we've hardcoded the
- *   TestApi class.
- * - a test for a type of job (i.e. a specific configuration) that tests all
- *   behavior we can think of by passing sets of items through it.
+ * - tests of methods that are better off being exercised by passing items
+ *   through a job, i.e. calling processItem() repeatedly - because unit tests
+ *   would just be harder to write and to read. This utilizes an API 'backend',
+ *   for which we've hardcoded the TestApi class.
+ * - tests for the behavior of a specific job setting. which are also
+ *   functional tests (calling processItem()) because that's the only way to
+ *   test them.
+ * - tests for several types of job (i.e. specific configurations) that
+ *   exercise all behavior we can think of.
  * Multiple scenarios/job types have not been implemented yet. There are
  * probably a few more things that can be tested in a 'method centric' way
- * (bullet 1/2) which would be nice, but we'll likely end up mostly
+ * (point 1/2) which would be nice, but we'll likely end up mostly
  * implementing 'scenario/job configuration centric' tests from now on.
  */
 // Above should be in global namespace. Using two namespaces in the same file
@@ -159,7 +163,7 @@ class CopernicaUpdateProfilesJobTest extends TestCase
     /**
      * Determines whether a job returned by getJob() uses a local profile cache.
      *
-     * This must be set using setJobUsesProfileCache\() to be bug free.
+     * This must be set using setJobUsesProfileCache() to be bug free.
      */
     protected $jobUsesProfileCache = [];
 
@@ -811,6 +815,26 @@ class CopernicaUpdateProfilesJobTest extends TestCase
     }
 
     /**
+     * Constructs test REST client.
+     *
+     * @param \CopernicaApi\Tests\TestApi $api
+     *   Test API instance.
+     *
+     * @return \CopernicaApi\RestClient
+     *   REST client, with
+     */
+    protected function getClient(TestApi $api)
+    {
+        return new class ($api) extends RestClient {
+            public function __construct(TestApi $api)
+            {
+                parent::__construct('testtoken');
+                parent::setApi($api);
+            }
+        };
+    }
+
+    /**
      * Tests keyFieldValueWasNeverProcessedBefore() & getHighestCopernicaValue()
      *
      * getHighestCopernicaValue() is a dependency. We're testing both in one
@@ -860,8 +884,8 @@ class CopernicaUpdateProfilesJobTest extends TestCase
         // Call start() to initialize context, but don't fetch items. We likely
         // don't even need an initialized context here, but don't want to have
         // to think about it.
-        $job_context = ['drunkins_override_fetch' => ['anything']];
-        $items_not_fetched = $job->start($job_context);
+        $job_context = ['drunkins_override_fetch' => ['this-is-a-fake-item']];
+        $array_of_1_fake_item = $job->start($job_context);
 
         // If the database is empty, everything just returns null.
         $this->assertSame(null, $job->getHighestCopernicaValue('magentocustomerid'));
@@ -958,8 +982,8 @@ class CopernicaUpdateProfilesJobTest extends TestCase
         // Setup (which, ironically, already exercises getMainProfilesByKey()):
         // Call start() to initialize context, but don't fetch items.
         $job__mail = $this->getJob('action_log', ['copernica_profile_key_field' => 'email', 'duplicate_updates' => true], $api);
-        $job_context = ['drunkins_override_fetch' => ['anything']];
-        $items_not_fetched = $job__mail->start($job_context);
+        $job_context = ['drunkins_override_fetch' => ['this-is-a-fake-item']];
+        $array_of_1_fake_item = $job__mail->start($job_context);
 
         // Standard job configuration to insert email without main_id.
         $job__mail->processItem(['email' => '1@example.com'], $job_context);
@@ -1164,8 +1188,8 @@ class CopernicaUpdateProfilesJobTest extends TestCase
         ];
         $api = new TestApi($structure, null, true);
         // Call start() to initialize context, but don't fetch items.
-        $job_context = ['drunkins_override_fetch' => ['anything']];
-        $items_not_fetched = $this->getJob('id', [], $api)->start($job_context);
+        $job_context = ['drunkins_override_fetch' => ['this-is-a-fake-item']];
+        $array_of_1_fake_item = $this->getJob('id', [], $api)->start($job_context);
 
         // We won't test a separate job without field settings, as 'text' is
         // effectively the same as 'no settings'.
@@ -1265,6 +1289,74 @@ class CopernicaUpdateProfilesJobTest extends TestCase
     }
 
     /**
+     * Tests the 'prevent_profile_creation' setting.
+     */
+    public function testPreventProfileCreation()
+    {
+        // Comment if you want logs on screen. (This test issues warnings and
+        // tests for them.)
+        $GLOBALS['drunkins_log_test_screen'] = WATCHDOG_ERROR;
+
+        $structure = [
+            self::DATABASE_ID => [
+                'fields' => [
+                    'Email' => ['type' => 'email'],
+                    'Firstname' => ['type' => 'text'],
+                ],
+            ]
+        ];
+        $api = new TestApi($structure, null, true);
+        $database_id = self::DATABASE_ID;
+        $item = ['email' => 'rm@wyz.biz', 'first_name' => 'Roderik'];
+
+        // Reuse 'action_log' job so we don't have to make another definition.
+        // (We don't care much about the exact setup.)
+        $job = $this->getJob('action_log', ['prevent_profile_creation' => true], $api);
+        // Call start() to initialize context, but don't fetch items.
+        $job_context = ['drunkins_override_fetch' => ['this-is-a-fake-item']];
+        $array_of_1_fake_item = $job->start($job_context);
+        // Test 1: Nothing should be logging here.
+        $GLOBALS['drunkins_log_test_threshold'] = WATCHDOG_INFO;
+        $job->processItem($item, $job_context);
+        $this->assertSame(
+            ["GET database/$database_id/profiles"],
+            $api->getApiUpdateLog()
+        );
+        $this->assertSame([], $this->getDrunkinsLogs());
+        $api->resetApiUpdateLog();
+        // We'll need to change the inspection of the job context later, but
+        // this does for now, as an assertion that the counter was increased.
+        $this->assertSame(1, $job_context['process_summary']['profiles_nonexistent']);
+
+        // Test 2: waring should be logged.
+        $job = $this->getJob('action_log', ['prevent_profile_creation' => WATCHDOG_WARNING], $api);
+        $job->processItem($item, $job_context);
+        $this->assertSame(
+            ["GET database/$database_id/profiles"],
+            $api->getApiUpdateLog()
+        );
+        $this->assertSame(
+            [
+                'No existing profile found for "rm@wyz.biz"; skipping update.'
+            ],
+            $this->getDrunkinsLogs()
+        );
+        // We were lazy and didn't reset the context, so it's 2 now.
+        $this->assertSame(2, $job_context['process_summary']['profiles_nonexistent']);
+        $api->resetApiUpdateLog();
+        unset($GLOBALS['drunkins_log_test_stack']);
+
+        // Test 3: exception. (We could also test for the LogicException that
+        // is thrown for invalid prevent_profile_creation values, but that
+        // requires an extra method and I'm lazy.)
+        $this->expectException(RuntimeException::class);
+        $this->expectExceptionCode(100);
+        $this->expectExceptionMessage('Profile not found (and creating new profiles is disallowed).');
+        $job = $this->getJob('action_log', ['prevent_profile_creation' => -1], $api);
+        $job->processItem($item, $job_context);
+    }
+
+    /**
      * Tests a synchronization where a collection is a sort of 'action log'.
      *
      * This means that a sub-item processed by the synchronization will lead to
@@ -1275,8 +1367,8 @@ class CopernicaUpdateProfilesJobTest extends TestCase
      * - a few scenarios where field names in a (sub)item are not equally cased;
      * - 'copernica_profile_fields' setting (i.e. item field names differing
      *   from Copernica field names), also combined with the previous point;
-     * - a few lower-level aspects of the cache,
-     * because we have no dedicated lower-level tests for that.
+     * - a few lower-level aspects of the cache, because we have no dedicated
+     *   lower-level tests for that.
      */
     public function testActionLogSync()
     {
@@ -1318,8 +1410,8 @@ class CopernicaUpdateProfilesJobTest extends TestCase
         $collection_id = self::COLLECTION_ID;
 
         // Call start() to initialize context, but don't fetch items.
-        $job_context = ['drunkins_override_fetch' => ['anything']];
-        $items_not_fetched = $this->getJob('action_log', [], $api)->start($job_context);
+        $job_context = ['drunkins_override_fetch' => ['this-is-a-fake-item']];
+        $array_of_1_fake_item = $this->getJob('action_log', [], $api)->start($job_context);
         // For this job configuration, an item's profile fields do not have
         // the literal Copernica field names; they are mapped inside the job.
         // The subprofile data do have the Copernica field names.
@@ -1365,11 +1457,11 @@ class CopernicaUpdateProfilesJobTest extends TestCase
             [
                 "Ignoring '99:type' field in item, as 99:type_root is not a collection ID.",
                 "Item's 'last_name' field value is ignored because it also contains a 'last_Name' field.",
-                "(Sub)item's '45:date' field value is ignored because it also contains a '45,0:daTe' field.",
+                "(Sub)item's '$collection_id:date' field value is ignored because it also contains a '$collection_id,0:daTe' field.",
                 "Subitem's 'TYpe' field value is ignored because it also contains a 'Type' field.",
-                "(Sub)item's '45,0:TYPE' field value is ignored because it also contains a '45:TYpe' field.",
-                "Subitem's 'Date' field value is ignored because the item also contains a '45,0:daTe' field.",
-                "Subitem's 'Type' field value is ignored because the item also contains a '45:TYpe' field."
+                "(Sub)item's '$collection_id,0:TYPE' field value is ignored because it also contains a '$collection_id:TYpe' field.",
+                "Subitem's 'Date' field value is ignored because the item also contains a '$collection_id,0:daTe' field.",
+                "Subitem's 'Type' field value is ignored because the item also contains a '$collection_id:TYpe' field."
             ],
             $this->getDrunkinsLogs()
         );
@@ -1441,7 +1533,7 @@ class CopernicaUpdateProfilesJobTest extends TestCase
             ["PUT profile/$profile_id/fields", "POST profile/$profile_id/subprofiles/$collection_id"],
             $api->getApiUpdateLog(['POST', 'PUT', 'DELETE'])
         );
-        $api_client = new TestRestClient($api);
+        $api_client = $this->getClient($api);
         $check_profiles = $api_client->getEntities("database/$database_id/profiles", ['fields' => ['Firstname==Piet', 'Lastname==Muit']]);
         $this->assertSame(1, count($check_profiles));
 
@@ -1597,8 +1689,8 @@ class CopernicaUpdateProfilesJobTest extends TestCase
         $api = new TestApi($structure, null, true);
 
         // Call start() to initialize context, but don't fetch items.
-        $job_context = ['drunkins_override_fetch' => ['anything']];
-        $items_not_fetched = $this->getJob('magento_import', [], $api)->start($job_context);
+        $job_context = ['drunkins_override_fetch' => ['this-is-a-fake-item']];
+        $array_of_1_fake_item = $this->getJob('magento_import', [], $api)->start($job_context);
 
         // Basic error check: If not all sub-items have key field values, the
         // valid sub-items still get inserted as subprofiles (and the main
@@ -2054,8 +2146,10 @@ class CopernicaUpdateProfilesJobTest extends TestCase
     protected function getDrunkinsLogs()
     {
         $logs = [];
-        foreach ($GLOBALS['drunkins_log_test_stack'] as $log) {
-            $logs[] = t($log[0], $log[1]);
+        if (isset($GLOBALS['drunkins_log_test_stack'])) {
+            foreach ($GLOBALS['drunkins_log_test_stack'] as $log) {
+                $logs[] = t($log[0], $log[1]);
+            }
         }
         return $logs;
     }
@@ -2099,9 +2193,9 @@ class CopernicaUpdateProfilesJobTest extends TestCase
      *   configurations.
      *
      * @param string|false $type
-     *   (Optional) The 'job type', which is used as an ID for selecting a standard
-     *   settings configuration. If '', gets the same type as previously. If
-     *   FALSE, the cache gets reset and nothing gets returned.
+     *   (Optional) The 'job type', which is used as an ID for selecting a
+     *   standard settings configuration. If '', gets the same type as
+     *   previously. If FALSE, the cache gets reset and nothing gets returned.
      * @param array $more_settings
      *   Extra settings to pass to the job. If an empty array, the job instance
      *   gets cached.
@@ -2217,7 +2311,7 @@ class CopernicaUpdateProfilesJobTest extends TestCase
                 // necessary. (drunkins_get_job() always adds it.)
                 'job_id' => 'copernica_update_test',
                 'dependencies' => [
-                    'copernica_client' => new TestRestClient($api)
+                    'copernica_client' => $this->getClient($api)
                 ],
                 // The class doesn't use this (because RestClient is already
                 // instantiated) but still checks its presence.
