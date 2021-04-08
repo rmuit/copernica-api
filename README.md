@@ -299,13 +299,14 @@ anymore. In case you want to know:
 
 ### Compatibility
 
-The library works with PHP5 and PHP7.
+The library works with PHP7/8 and _probably_ with PHP5.
 
 While PHP5 is way beyond end-of-life, I'm trying to keep it compatible as long
-as I don't see a real benefit / because  I'm still used to it / because who
-knows what old code companies are still running internally. I won't reject
-PHP7-only additions though. (Admittedly not using the ?? operator is starting
-to feel masochistic.)
+as I don't see a real benefit to using PHP7-only constructs, because I'm still
+used to it / because who knows what old code companies are still running
+internally. I won't reject PHP7-only additions though. And test coverage for
+PHP5 was already dropped because the tests themselves contain PHP7-only
+constructs, so I won't notice if I accidentally break PHP5 compatibility.
 
 ### Project name
 
