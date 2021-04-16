@@ -575,6 +575,8 @@ class CopernicaUpdateProfilesJobTest extends TestCase
         $this->assertSame(['email' => 'rm@wyz.biz'], $value);
         $value = $job->getItemKeyFieldValue($item, true, 'loggable');
         $this->assertSame('"rm@wyz.biz"', $value);
+        $value = $job->getItemKeyFieldValue($item, true, 'loggable-nonempty');
+        $this->assertSame('"rm@wyz.biz"', $value);
         $value = $job->getItemKeyFieldValue($item, true, 0);
         $this->assertSame('rm@wyz.biz', $value);
         $this->assertExceptionForGetItemKeyFieldValue($job, $item, false, 1, LogicException::class, "Key 1 not found in 'copernica_profile_key_field' setting.");
@@ -600,6 +602,8 @@ class CopernicaUpdateProfilesJobTest extends TestCase
         $this->assertSame(['email' => null], $value);
         $value = $job->getItemKeyFieldValue($item, true, 'loggable');
         $this->assertSame('<empty>', $value);
+        $value = $job->getItemKeyFieldValue($item, true, 'loggable-nonempty');
+        $this->assertSame('<empty>', $value);
         $value = $job->getItemKeyFieldValue($item, true, 0);
         $this->assertSame(null, $value);
 
@@ -615,6 +619,8 @@ class CopernicaUpdateProfilesJobTest extends TestCase
         $value = $job->getItemKeyFieldValue($item, true, 'all');
         $this->assertSame(['email' => 'rm@wyz.biz'], $value);
         $value = $job->getItemKeyFieldValue($item, true, 'loggable');
+        $this->assertSame('"rm@wyz.biz"', $value);
+        $value = $job->getItemKeyFieldValue($item, true, 'loggable-nonempty');
         $this->assertSame('"rm@wyz.biz"', $value);
         $value = $job->getItemKeyFieldValue($item, true, 0);
         $this->assertSame('rm@wyz.biz', $value);
@@ -638,6 +644,8 @@ class CopernicaUpdateProfilesJobTest extends TestCase
         $this->assertSame(['email' => null], $value);
         $value = $job->getItemKeyFieldValue($item, true, 'loggable');
         $this->assertSame('<empty>', $value);
+        $value = $job->getItemKeyFieldValue($item, true, 'loggable-nonempty');
+        $this->assertSame('<empty>', $value);
         $value = $job->getItemKeyFieldValue($item, true, 0);
         $this->assertSame(null, $value);
 
@@ -657,6 +665,8 @@ class CopernicaUpdateProfilesJobTest extends TestCase
         $this->assertSame(['optionalid' => 5, 'email' => null], $value);
         $value = $job->getItemKeyFieldValue($item, true, 'loggable');
         $this->assertSame('5', $value);
+        $value = $job->getItemKeyFieldValue($item, true, 'loggable-nonempty');
+        $this->assertSame('5', $value);
         $value = $job->getItemKeyFieldValue($item, true, 0);
         $this->assertSame(5, $value);
         $value = $job->getItemKeyFieldValue($item, true, 1);
@@ -675,6 +685,8 @@ class CopernicaUpdateProfilesJobTest extends TestCase
         $this->assertSame(['OptionalId' => 5, 'email' => 'invalid@'], $value);
         $value = $job->getItemKeyFieldValue($item, true, 'loggable');
         $this->assertSame('5', $value);
+        $value = $job->getItemKeyFieldValue($item, true, 'loggable-nonempty');
+        $this->assertSame('5 / email="invalid@"', $value);
         $value = $job->getItemKeyFieldValue($item, true, 0);
         $this->assertSame(5, $value);
         $value = $job->getItemKeyFieldValue($item, true, 1);
@@ -693,6 +705,8 @@ class CopernicaUpdateProfilesJobTest extends TestCase
         $value = $job->getItemKeyFieldValue($item, true, 'all');
         $this->assertSame(['OptionalId' => null, 'email' => 'rm@wyz.biz'], $value);
         $value = $job->getItemKeyFieldValue($item, true, 'loggable');
+        $this->assertSame('email="rm@wyz.biz"', $value);
+        $value = $job->getItemKeyFieldValue($item, true, 'loggable-nonempty');
         $this->assertSame('email="rm@wyz.biz"', $value);
         $value = $job->getItemKeyFieldValue($item, true, 0);
         $this->assertSame(null, $value);
@@ -715,6 +729,8 @@ class CopernicaUpdateProfilesJobTest extends TestCase
         $this->assertSame(['OptionalId' => null, 'email' => 0], $value);
         $value = $job->getItemKeyFieldValue($item, true, 'loggable');
         $this->assertSame('email=0', $value);
+        $value = $job->getItemKeyFieldValue($item, true, 'loggable-nonempty');
+        $this->assertSame('email=0', $value);
         $value = $job->getItemKeyFieldValue($item, true, 0);
         $this->assertSame(null, $value);
         $value = $job->getItemKeyFieldValue($item, true, 1);
@@ -735,6 +751,8 @@ class CopernicaUpdateProfilesJobTest extends TestCase
         $value = $job->getItemKeyFieldValue($item, false, 'all');
         $this->assertSame(['OptionalId' => null, 'email' => null], $value);
         $value = $job->getItemKeyFieldValue($item, true, 'loggable');
+        $this->assertSame('<empty>', $value);
+        $value = $job->getItemKeyFieldValue($item, true, 'loggable-nonempty');
         $this->assertSame('<empty>', $value);
         $value = $job->getItemKeyFieldValue($item, true, 0);
         $this->assertSame(null, $value);
