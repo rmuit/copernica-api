@@ -329,7 +329,7 @@ class Helper
         }
         if ($throw_if_incomplete) {
             if (isset($wrapper['total']) && $wrapper['count'] !== $wrapper['total']) {
-                throw new RuntimeException("Cannot return the total set of {$wrapper['totel']} entities inside '$property_name' property; only {$wrapper['count']} found.", 804);
+                throw new RuntimeException("Cannot return the total set of {$wrapper['total']} entities inside '$property_name' property; only {$wrapper['count']} found.", 804);
             }
             if (!isset($wrapper['total']) && $wrapper['count'] === $wrapper['limit']) {
                 // We're taking the risk of throwing an unnecessary

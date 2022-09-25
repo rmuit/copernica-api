@@ -40,7 +40,9 @@ $client->put("profile/$id", ['fields' => ['email' => 'info@wyz.biz']]);
 // location:
 $return = $client->put(
   "database/$db_id/profiles",
+  // Profile data to update:
   ['fields' => ['email' => 'info@wyz.biz', 'company' => 'Wyz']],
+  // Selection criteria for existing profiles:
   ['fields' => ['company==Wyz'], 'create' => true]);
 if ($return !== true) {
     // (This is an odd way of having to extract the new ID, and requires you to
@@ -71,7 +73,7 @@ $profiles = $client->getEntities("database/$db_id/profiles");
 $profiles = $client->getEntities("database/$db_id/profiles", ['dataonly' => true]);
 // The returned list has a zero-based index. If we want to access the profiles
 // by ID, here's a quick helper method.
-$mailings = Helper::rekeyEntities($profiles, 'ID');
+$profiles = Helper::rekeyEntities($profiles, 'ID');
 
 // Delete a single entity; throw an exception if it was already removed/deleted
 // earlier:

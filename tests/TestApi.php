@@ -2746,7 +2746,7 @@ class TestApi
      * Checks 'ID' and 'name' properties for each element.
      *
      * This checks whether any of those properties is duplicate or illegal, and
-     * checks whether the key of the element is a name, an ID, or just am
+     * checks whether the key of the element is a name, an ID, or just an
      * auto-numbered key.
      *
      * Auto-numbered here means that the key of the Nth element is N-1, AND no

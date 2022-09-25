@@ -39,7 +39,7 @@ class BatchableRestClient extends RestClient
      * safe to do so even in some places where Copernica may not officially
      * document this.
      *
-     * Below arrays have three or four sub values:
+     * Below arrays have two to four subvalues:
      * - The name of the property which results are ordered by, by default
      *   (or "always", if the specific API query doesn't support 'orderby').
      * - True if the property value is always unique per entity.
@@ -49,8 +49,8 @@ class BatchableRestClient extends RestClient
      *   to do filtering, if it's not the general "fields" parameter.
      *
      * The keys are substrings of a resource. We'd be in trouble if multiple
-     * resources matching the same string have differing properties but we'll
-     * cross that bridge whene we get there. (Some resource matching should stay
+     * resources matching the same string have differing properties, but we'll
+     * cross that bridge when we get there. (Some resource matching should stay
      * 'open ended' though, because Copernica allows adding 'useless' parts at
      * the end of some resources.)
      */
