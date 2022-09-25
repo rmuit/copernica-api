@@ -141,7 +141,6 @@ require_once(__DIR__ . '/../tests/TestApi.php');
 // phpcs:ignore PSR1.Classes.ClassDeclaration
 class CopernicaUpdateProfilesJobTest extends TestCase
 {
-
     /**
      * ID for our copernica database. The value doesn't matter.
      *
